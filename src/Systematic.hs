@@ -1,24 +1,38 @@
 {-# language StrictData #-}
 
 module Systematic
-  ( Mode(..)
+  ( TCP
+  , UDP
+  , IPv4
+  , IPv6
+  , Process
+  , Mode(..)
   , Transport(..)
-  , Network
+  , Address(..)
+  , Port(..)
+  , SocketID(..)
+  , SocketInfo(..)
+  , LocalEvent(..)
   , connect
   , listen
   , accept
   , send
   , receive
   , close
+  , logMessage
   , runSystem
+  , localhost
+  , logAsHaskell
+  , prettySysCall
   ) where
 
-import Data.ByteString
+import Data.ByteString ( ByteString )
 import Data.Binary
 import Control.Monad.Operational as O
 import GHC.Generics
 import Data.Functor
 import Data.IORef
+import Type.Reflection
 
 import qualified System.Socket                  as Socket
 import qualified System.Socket.Family.Inet      as Socket
@@ -27,13 +41,27 @@ import qualified System.Socket.Type.Stream      as Socket
 import qualified System.Socket.Type.Datagram    as Socket
 import qualified System.Socket.Protocol.Default as Socket
 
+type TCP  = Socket.Stream
+type UDP  = Socket.Datagram
+type IPv4 = Socket.Inet
+type IPv6 = Socket.Inet6
+
+newtype Process socket a
+  = Process (Program (Network socket) a)
+  deriving newtype (Functor, Applicative, Monad)
+
 data Mode
   = Listening
   | Connected
+  deriving (Eq, Ord, Show)
 
 data Transport t where
-  TCP :: Transport Socket.Stream
-  UDP :: Transport Socket.Datagram
+  TCP :: Transport TCP
+  UDP :: Transport UDP
+
+deriving instance Eq (Transport t)
+deriving instance Ord (Transport t)
+deriving instance Show (Transport t)
 
 data Network socket a where
   Connect
@@ -60,60 +88,68 @@ data Network socket a where
   Close
     :: socket f t mode
     -> Network socket ()
-
-type Process a
-  = forall socket. Program (Network socket) a
+  LogMessage
+    :: (Typeable message, Show message)
+    => message
+    -> Network socket ()
 
 connect
   :: Transport t
   -> Address f
   -> Port
-  -> Program (Network socket) (socket f t Connected)
+  -> Process socket (socket f t Connected)
 connect transport address port =
-  O.singleton (Connect transport address port)
+  Process $ O.singleton (Connect transport address port)
 
 listen
   :: Transport t
   -> Address f
   -> Port
-  -> Program (Network socket) (socket f t Listening)
+  -> Process socket (socket f t Listening)
 listen transport address port =
-  O.singleton (Listen transport address port)
+  Process $ O.singleton (Listen transport address port)
 
 accept
   :: socket f t Listening
-  -> Program (Network socket) (socket f t Connected)
+  -> Process socket (socket f t Connected)
 accept socket =
-  O.singleton (Accept socket)
+  Process $ O.singleton (Accept socket)
 
 send
   :: socket f t Connected
   -> ByteString
-  -> Program (Network socket) ()
+  -> Process socket ()
 send socket bytestring =
-  O.singleton (Send socket bytestring)
+  Process $ O.singleton (Send socket bytestring)
 
 receive
   :: socket f t Connected
   -> Int
-  -> Program (Network socket) ByteString
+  -> Process socket ByteString
 receive socket bufferSize =
-  O.singleton (Receive socket bufferSize)
+  Process $ O.singleton (Receive socket bufferSize)
 
 close
   :: socket f t mode
-  -> Program (Network socket) ()
+  -> Process socket ()
 close socket =
-  O.singleton (Close socket)
+  Process $ O.singleton (Close socket)
+
+logMessage
+  :: (Typeable message, Show message)
+  => message
+  -> Process socket ()
+logMessage message =
+  Process $ O.singleton (LogMessage message)
 
 -- Implementation against actual network sockets
 
 data Address f where
   IPv4 :: Word8 -> Word8 -> Word8 -> Word8
-       -> Address Socket.Inet
+       -> Address IPv4
   IPv6 :: Word16 -> Word16 -> Word16 -> Word16
        -> Word16 -> Word16 -> Word16 -> Word16
-       -> Address Socket.Inet6
+       -> Address IPv6
 
 deriving instance Eq (Address f)
 deriving instance Ord (Address f)
@@ -140,9 +176,8 @@ withTransportType UDP k = k
 
 newtype Port
   = Port Word16
-  deriving stock (Generic, Eq, Ord)
+  deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass (Binary)
-  deriving newtype (Show, Num)
 
 newtype SocketID
   = SocketID Integer
@@ -155,6 +190,14 @@ data ActualSocket f t (mode :: Mode) where
     -> Transport t
     -> Socket.Socket f t Socket.Default
     -> ActualSocket f t mode
+
+class SocketInfo socket where
+  socketID        :: socket f t mode -> SocketID
+  socketTransport :: socket f t mode -> Transport t
+
+instance SocketInfo ActualSocket where
+  socketID (ASocket i _ _) = i
+  socketTransport (ASocket _ t _) = t
 
 newtype IDStream a
   = IDStream (IORef a)
@@ -178,24 +221,29 @@ setupSocket ids (transport :: Transport t) =
     i <- newID ids
     s <- Socket.socket @f @t @Socket.Default
     Socket.setSocketOption s (Socket.ReuseAddress True)
-    Socket.setSocketOption s (Socket.V6Only False)
+    --Socket.setSocketOption s (Socket.V6Only False)  -- TODO: Only for IPv6
     return (ASocket i transport s)
 
-data NetworkEvent socket where
-  NetworkEvent :: Network socket a -> a -> NetworkEvent socket
+data LocalEvent socket where
+  LocalEvent :: Network socket a -> a -> LocalEvent socket
 
-runSystem :: (NetworkEvent ActualSocket -> IO ()) -> Process a -> IO a
-runSystem logEvent program = do
+runSystem
+  :: (forall socket. SocketInfo socket => LocalEvent socket -> IO ())
+  -> (forall socket. SocketInfo socket => Process socket a)
+  -> IO a
+runSystem logEvent (Process program) = do
   socketIDs <- newIDStream (SocketID 0)
-  interpretWithMonad (evalLogging socketIDs) (program @ActualSocket)
+  interpretWithMonad (evalLogging socketIDs) program
   where
-    evalLogging :: IDStream SocketID -> Network ActualSocket a -> IO a
+    evalLogging, eval
+      :: IDStream SocketID -> Network ActualSocket a -> IO a
+
+    -- TODO: How to print syscall before executing, then bound result after?
     evalLogging socketIDs syscall = do
       result <- eval socketIDs syscall
-      logEvent (NetworkEvent syscall result)
+      logEvent (LocalEvent syscall result)
       return result
 
-    eval :: IDStream SocketID -> Network ActualSocket a -> IO a
     eval socketIDs = \case
       Connect transport address port ->
         withAddressFamily address $ do
@@ -225,3 +273,86 @@ runSystem logEvent program = do
 
       Close (ASocket _ _ s) ->
         Socket.close s
+
+      LogMessage _ ->
+        mempty
+
+localhost :: Address IPv4
+localhost = IPv4 127 0 0 1
+
+logAsHaskell
+  :: SocketInfo socket
+  => (Integer -> String)
+  -> (String -> IO ())
+  -> (forall a. (Typeable a, Show a) => a -> IO ())
+  -> LocalEvent socket
+  -> IO ()
+logAsHaskell socketName logNetwork forwardLog = \case
+  LocalEvent syscall result -> do
+    maybe mempty logNetwork
+      (prettySysCall socketName syscall result)
+    case syscall of
+      LogMessage message -> forwardLog message
+      _ -> mempty
+
+prettySysCall
+  :: SocketInfo socket
+  => (Integer -> String)
+  -> Network socket a
+  -> a
+  -> Maybe String
+prettySysCall socketName syscall result =
+  let prettied :: String =
+        case syscall of
+          Connect transport address port ->
+            concat [ nameSocket result
+                  , " <- connect "
+                  , show transport
+                  , " ("
+                  , show address
+                  , ") ("
+                  , show port
+                  , ")"
+                  ]
+          Listen transport address port ->
+            concat [ nameSocket result
+                  , " <- listen "
+                  , show transport
+                  , " ("
+                  , show address
+                  , ") ("
+                  , show port
+                  , ")"
+                  ]
+          Accept socket ->
+            concat [ nameSocket result
+                  , " <- accept "
+                  , nameSocket socket
+                  ]
+          Send socket string ->
+            concat [ "send "
+                  , nameSocket socket
+                  , " "
+                  , show string
+                  ]
+          Receive socket bufferSize ->
+            concat [ show result
+                  , " <- receive "
+                  , nameSocket socket
+                  , " "
+                  , show bufferSize
+                  ]
+          Close socket ->
+            concat [ "close "
+                  , nameSocket socket
+                  ]
+          LogMessage message ->
+            concat [ "logMessage @"
+                   , showsPrec 11 (typeOf message) ""
+                   , " "
+                   , showsPrec 11 message ""
+                   ]
+  in if prettied == "" then Nothing else Just prettied
+  where
+    nameSocket :: SocketInfo socket => socket f t mode -> String
+    nameSocket (socketID -> SocketID i) = socketName i
