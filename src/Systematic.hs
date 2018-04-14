@@ -8,7 +8,8 @@ module Systematic
   , Process
   , Mode(..)
   , Transport(..)
-  , Address(..)
+  , HasAddress(..)
+  , AddressType(..)
   , Port(..)
   , SocketID(..)
   , SocketInfo(..)
@@ -21,7 +22,6 @@ module Systematic
   , close
   , logMessage
   , runSystem
-  , localhost
   , logAsHaskell
   , prettySysCall
   ) where
@@ -66,17 +66,17 @@ deriving instance Show (Transport t)
 data Network socket a where
   Connect
     :: Transport t
+    -> AddressType f
     -> Address f
     -> Port
     -> Network socket (socket f t Connected)
   Listen
-    :: Transport t
-    -> Address f
+    :: AddressType f
     -> Port
-    -> Network socket (socket f t Listening)
+    -> Network socket (socket f TCP Listening)
   Accept
-    :: socket f t Listening
-    -> Network socket (socket f t Connected)
+    :: socket f TCP Listening
+    -> Network socket (socket f TCP Connected)
   Send
     :: socket f t Connected
     -> ByteString
@@ -93,25 +93,31 @@ data Network socket a where
     => message
     -> Network socket ()
 
+-- TODO: Add threads to the DSL
+-- Should it log which thread does each line?
+
+-- TODO: What does listen really do? Does it ever make sense to listen from an
+-- address other than 0.0.0.0 or 127.0.0.1? If not, then only specify port.
+
 connect
   :: Transport t
+  -> AddressType f
   -> Address f
   -> Port
   -> Process socket (socket f t Connected)
-connect transport address port =
-  Process $ O.singleton (Connect transport address port)
+connect transport addressType address port =
+  Process $ O.singleton (Connect transport addressType address port)
 
 listen
-  :: Transport t
-  -> Address f
+  :: AddressType f
   -> Port
-  -> Process socket (socket f t Listening)
-listen transport address port =
-  Process $ O.singleton (Listen transport address port)
+  -> Process socket (socket f TCP Listening)
+listen addressType port =
+  Process $ O.singleton (Listen addressType port)
 
 accept
-  :: socket f t Listening
-  -> Process socket (socket f t Connected)
+  :: socket f TCP Listening
+  -> Process socket (socket f TCP Connected)
 accept socket =
   Process $ O.singleton (Accept socket)
 
@@ -144,31 +150,45 @@ logMessage message =
 
 -- Implementation against actual network sockets
 
-data Address f where
-  IPv4 :: Word8 -> Word8 -> Word8 -> Word8
-       -> Address IPv4
-  IPv6 :: Word16 -> Word16 -> Word16 -> Word16
-       -> Word16 -> Word16 -> Word16 -> Word16
-       -> Address IPv6
+data AddressType f where
+  IPv4 :: AddressType IPv4
+  IPv6 :: AddressType IPv6
 
-deriving instance Eq (Address f)
-deriving instance Ord (Address f)
-deriving instance Show (Address f)
--- need a Binary instance for Address
+deriving instance Eq (AddressType f)
+deriving instance Ord (AddressType f)
+deriving instance Show (AddressType f)
 
-actualAddress :: Address f -> Port -> Socket.SocketAddress f
-actualAddress (IPv4 a b c d) (Port p) =
+showAddress :: AddressType f -> Address f -> String
+showAddress IPv4 = show
+showAddress IPv6 = show
+
+class HasAddress f where
+  type Address f = r | r -> f
+  localhost :: Address f
+
+instance HasAddress IPv4 where
+  type Address IPv4
+    = (Word8, Word8, Word8, Word8)
+  localhost = (127,0,0,1)
+
+instance HasAddress IPv6 where
+  type Address IPv6
+    = (Word16, Word16, Word16, Word16, Word16, Word16, Word16, Word16)
+  localhost = (0,0,0,0,0,0,0,1)
+
+actualAddress :: AddressType f -> Address f -> Port -> Socket.SocketAddress f
+actualAddress IPv4 tuple (Port p) =
   Socket.SocketAddressInet
-    (Socket.inetAddressFromTuple (a, b, c, d))
+    (Socket.inetAddressFromTuple tuple)
     (fromIntegral p)
-actualAddress (IPv6 a b c d e f g h) (Port p) =
+actualAddress IPv6 tuple (Port p) =
   Socket.SocketAddressInet6
-    (Socket.inet6AddressFromTuple (a, b, c, d, e, f, g, h))
+    (Socket.inet6AddressFromTuple tuple)
     (fromIntegral p) 0 0
 
-withAddressFamily :: Address f -> (Socket.Family f => r) -> r
-withAddressFamily IPv4{} k = k
-withAddressFamily IPv6{} k = k
+withAddressFamily :: AddressType f -> (Socket.Family f => r) -> r
+withAddressFamily IPv4 k = k
+withAddressFamily IPv6 k = k
 
 withTransportType :: Transport t -> (Socket.Type t => r) -> r
 withTransportType TCP k = k
@@ -199,6 +219,10 @@ instance SocketInfo ActualSocket where
   socketID (ASocket i _ _) = i
   socketTransport (ASocket _ t _) = t
 
+-- TODO: IDStream should not be fixed to a type, but rather hand out strings
+-- suffixed with numbers or such, given a particular prefix. Internally, a map
+-- from prefix strings to numbers.
+
 newtype IDStream a
   = IDStream (IORef a)
 
@@ -215,17 +239,20 @@ setupSocket
   :: forall f t mode. Socket.Family f
   => IDStream SocketID
   -> Transport t
+  -> AddressType f
   -> IO (ActualSocket f t mode)
-setupSocket ids (transport :: Transport t) =
+setupSocket ids transport addressType =
   withTransportType transport $ do
     i <- newID ids
     s <- Socket.socket @f @t @Socket.Default
     Socket.setSocketOption s (Socket.ReuseAddress True)
-    --Socket.setSocketOption s (Socket.V6Only False)  -- TODO: Only for IPv6
+    case addressType of
+      IPv6 -> Socket.setSocketOption s (Socket.V6Only False) :: IO ()
+      _    -> mempty :: IO ()
     return (ASocket i transport s)
 
 data LocalEvent socket where
-  LocalEvent :: Network socket a -> a -> LocalEvent socket
+  LocalEvent :: Network socket a -> Maybe a -> LocalEvent socket
 
 runSystem
   :: (forall socket. SocketInfo socket => LocalEvent socket -> IO ())
@@ -239,22 +266,30 @@ runSystem logEvent (Process program) = do
       :: IDStream SocketID -> Network ActualSocket a -> IO a
 
     -- TODO: How to print syscall before executing, then bound result after?
+    -- Log Nothing if exception was thrown, log the exception, then re-throw
     evalLogging socketIDs syscall = do
       result <- eval socketIDs syscall
-      logEvent (LocalEvent syscall result)
+      logEvent (LocalEvent syscall (Just result))
       return result
 
     eval socketIDs = \case
-      Connect transport address port ->
-        withAddressFamily address $ do
-          socket@(ASocket _ _ s) <- setupSocket socketIDs transport
-          Socket.connect s (actualAddress address port)
+      Connect transport addressType address port ->
+        withAddressFamily addressType $ do
+          socket@(ASocket _ _ s) <- setupSocket socketIDs transport addressType
+          Socket.connect s (actualAddress addressType address port)
           return socket
 
-      Listen transport address port ->
-        withAddressFamily address $ do
-          socket@(ASocket _ _ s) <- setupSocket socketIDs transport
-          Socket.bind s (actualAddress address port)
+      Listen (addressType :: AddressType f) (Port port) ->
+        withAddressFamily addressType $ do
+          socket@(ASocket _ _ s) <- setupSocket socketIDs TCP addressType
+          let socketAddress :: Socket.SocketAddress f
+              socketAddress =
+                case addressType of
+                  IPv4 -> Socket.SocketAddressInet
+                    Socket.inetAny (fromIntegral port)
+                  IPv6 -> Socket.SocketAddressInet6
+                    Socket.inet6Any (fromIntegral port) 0 0
+          Socket.bind s socketAddress
           Socket.listen s 0
           return socket
 
@@ -277,9 +312,6 @@ runSystem logEvent (Process program) = do
       LogMessage _ ->
         mempty
 
-localhost :: Address IPv4
-localhost = IPv4 127 0 0 1
-
 logAsHaskell
   :: SocketInfo socket
   => (Integer -> String)
@@ -287,46 +319,46 @@ logAsHaskell
   -> (forall a. (Typeable a, Show a) => a -> IO ())
   -> LocalEvent socket
   -> IO ()
-logAsHaskell socketName logNetwork forwardLog = \case
+logAsHaskell socketName localLog messageLog = \case
   LocalEvent syscall result -> do
-    maybe mempty logNetwork
+    maybe mempty localLog
       (prettySysCall socketName syscall result)
     case syscall of
-      LogMessage message -> forwardLog message
+      LogMessage message -> messageLog message
       _ -> mempty
 
 prettySysCall
   :: SocketInfo socket
   => (Integer -> String)
   -> Network socket a
-  -> a
+  -> Maybe a
   -> Maybe String
 prettySysCall socketName syscall result =
   let prettied :: String =
         case syscall of
-          Connect transport address port ->
-            concat [ nameSocket result
-                  , " <- connect "
+          Connect transport addressType address port ->
+            concat [ maybeBindSocket result
+                  , "connect "
                   , show transport
+                  , " "
+                  , show addressType
+                  , " "
+                  , showAddress addressType address
                   , " ("
-                  , show address
-                  , ") ("
                   , show port
                   , ")"
                   ]
-          Listen transport address port ->
-            concat [ nameSocket result
-                  , " <- listen "
-                  , show transport
+          Listen addressType port ->
+            concat [ maybeBindSocket result
+                  , "listen "
+                  , show addressType
                   , " ("
-                  , show address
-                  , ") ("
                   , show port
                   , ")"
                   ]
           Accept socket ->
-            concat [ nameSocket result
-                  , " <- accept "
+            concat [ maybeBindSocket result
+                  , "accept "
                   , nameSocket socket
                   ]
           Send socket string ->
@@ -354,5 +386,9 @@ prettySysCall socketName syscall result =
                    ]
   in if prettied == "" then Nothing else Just prettied
   where
+    maybeBindSocket :: SocketInfo socket => Maybe (socket f t mode) -> String
+    maybeBindSocket Nothing = ""
+    maybeBindSocket (Just s) = nameSocket s ++ " <- "
+
     nameSocket :: SocketInfo socket => socket f t mode -> String
     nameSocket (socketID -> SocketID i) = socketName i
