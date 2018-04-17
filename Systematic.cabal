@@ -28,7 +28,8 @@ library
                    bytestring >= 0.10,
                    operational >= 0.2,
                    socket >= 0.8,
-                   binary >= 0.8
+                   binary >= 0.8,
+                   transformers >= 0.5
 
   ghc-options:
     -Wall

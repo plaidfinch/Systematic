@@ -33,6 +33,8 @@ import GHC.Generics
 import Data.Functor
 import Data.IORef
 import Type.Reflection
+import Control.Exception
+import Control.Monad.Trans.Maybe
 
 import qualified System.Socket                  as Socket
 import qualified System.Socket.Family.Inet      as Socket
@@ -148,6 +150,8 @@ logMessage
 logMessage message =
   Process $ O.singleton (LogMessage message)
 
+-- TODO: Custom type errors?
+
 -- Implementation against actual network sockets
 
 data AddressType f where
@@ -252,26 +256,30 @@ setupSocket ids transport addressType =
     return (ASocket i transport s)
 
 data LocalEvent socket where
-  LocalEvent :: Network socket a -> Maybe a -> LocalEvent socket
+  LocalEvent
+    :: Network socket a
+    -> Either Socket.SocketException a
+    -> LocalEvent socket
 
 runSystem
   :: (forall socket. SocketInfo socket => LocalEvent socket -> IO ())
   -> (forall socket. SocketInfo socket => Process socket a)
-  -> IO a
+  -> IO (Maybe a)
 runSystem logEvent (Process program) = do
   socketIDs <- newIDStream (SocketID 0)
-  interpretWithMonad (evalLogging socketIDs) program
+  runMaybeT $ interpretWithMonad (evalLogging socketIDs) program
   where
-    evalLogging, eval
-      :: IDStream SocketID -> Network ActualSocket a -> IO a
+    evalLogging :: IDStream SocketID -> Network ActualSocket a -> MaybeT IO a
+    evalLogging socketIDs syscall =
+      MaybeT $ catch
+        (do result <- eval socketIDs syscall
+            logEvent (LocalEvent syscall (Right result))
+            return (Just result))
+        (\(e :: Socket.SocketException) ->
+           do logEvent (LocalEvent syscall (Left e))
+              return Nothing)
 
-    -- TODO: How to print syscall before executing, then bound result after?
-    -- Log Nothing if exception was thrown, log the exception, then re-throw
-    evalLogging socketIDs syscall = do
-      result <- eval socketIDs syscall
-      logEvent (LocalEvent syscall (Just result))
-      return result
-
+    eval :: IDStream SocketID -> Network ActualSocket a -> IO a
     eval socketIDs = \case
       Connect transport addressType address port ->
         withAddressFamily addressType $ do
@@ -321,8 +329,7 @@ logAsHaskell
   -> IO ()
 logAsHaskell socketName localLog messageLog = \case
   LocalEvent syscall result -> do
-    maybe mempty localLog
-      (prettySysCall socketName syscall result)
+    localLog (prettySysCall socketName syscall result)
     case syscall of
       LogMessage message -> messageLog message
       _ -> mempty
@@ -331,64 +338,71 @@ prettySysCall
   :: SocketInfo socket
   => (Integer -> String)
   -> Network socket a
-  -> Maybe a
-  -> Maybe String
+  -> Either Socket.SocketException a
+  -> String
 prettySysCall socketName syscall result =
-  let prettied :: String =
-        case syscall of
-          Connect transport addressType address port ->
-            concat [ maybeBindSocket result
-                  , "connect "
-                  , show transport
-                  , " "
-                  , show addressType
-                  , " "
-                  , showAddress addressType address
-                  , " ("
-                  , show port
-                  , ")"
-                  ]
-          Listen addressType port ->
-            concat [ maybeBindSocket result
-                  , "listen "
-                  , show addressType
-                  , " ("
-                  , show port
-                  , ")"
-                  ]
-          Accept socket ->
-            concat [ maybeBindSocket result
-                  , "accept "
-                  , nameSocket socket
-                  ]
-          Send socket string ->
-            concat [ "send "
-                  , nameSocket socket
-                  , " "
-                  , show string
-                  ]
-          Receive socket bufferSize ->
-            concat [ show result
-                  , " <- receive "
-                  , nameSocket socket
-                  , " "
-                  , show bufferSize
-                  ]
-          Close socket ->
-            concat [ "close "
-                  , nameSocket socket
-                  ]
-          LogMessage message ->
-            concat [ "logMessage @"
-                   , showsPrec 11 (typeOf message) ""
-                   , " "
-                   , showsPrec 11 message ""
-                   ]
-  in if prettied == "" then Nothing else Just prettied
+  call ++ exceptionComment
   where
-    maybeBindSocket :: SocketInfo socket => Maybe (socket f t mode) -> String
-    maybeBindSocket Nothing = ""
-    maybeBindSocket (Just s) = nameSocket s ++ " <- "
+    call = case syscall of
+      Connect transport addressType address port ->
+        concat [ maybeBindSocket result
+               , "connect "
+               , show transport
+               , " "
+               , show addressType
+               , " "
+               , showAddress addressType address
+               , " ("
+               , show port
+               , ")"
+               ]
+      Listen addressType port ->
+        concat [ maybeBindSocket result
+               , "listen "
+               , show addressType
+               , " ("
+               , show port
+               , ")"
+               ]
+      Accept socket ->
+        concat [ maybeBindSocket result
+               , "accept "
+               , nameSocket socket
+               ]
+      Send socket string ->
+        concat [ "send "
+               , nameSocket socket
+               , " "
+               , show string
+               ]
+      Receive socket bufferSize ->
+        concat [ show result
+               , " <- receive "
+               , nameSocket socket
+               , " "
+               , show bufferSize
+               ]
+      Close socket ->
+        concat [ "close "
+               , nameSocket socket
+               ]
+      LogMessage message ->
+        concat [ "logMessage @"
+               , showsPrec 11 (typeOf message) ""
+               , " "
+               , showsPrec 11 message ""
+               ]
+
+    exceptionComment = case result of
+      Right{} -> ""
+      Left e -> "\n-- *** Exception: " ++ show e
+
+    maybeBindSocket
+      :: SocketInfo socket
+      => Either Socket.SocketException (socket f t mode)
+      -> String
+    maybeBindSocket Left{} = ""
+    maybeBindSocket (Right s) = nameSocket s ++ " <- "
 
     nameSocket :: SocketInfo socket => socket f t mode -> String
     nameSocket (socketID -> SocketID i) = socketName i
