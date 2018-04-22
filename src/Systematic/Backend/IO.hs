@@ -2,15 +2,15 @@ module Systematic.Backend.IO
   ( runProcess
   ) where
 
-import Systematic
+import Systematic.Language
 import Systematic.Logging
 import Systematic.Enumerator
 
-import qualified System.Socket as S
-import qualified System.Socket.Family.Inet as S
-import qualified System.Socket.Family.Inet6 as S
+import qualified System.Socket                  as S
+import qualified System.Socket.Family.Inet      as S
+import qualified System.Socket.Family.Inet6     as S
 import qualified System.Socket.Protocol.Default as S
-import qualified System.Socket.Type.Stream as S
+import qualified System.Socket.Type.Stream      as S
 
 import Control.Monad.Operational
 import Data.Functor
@@ -19,10 +19,11 @@ import Control.Exception
 import Data.Monoid
 
 import Data.IORef
-import Control.Concurrent
+import Control.Concurrent hiding (ThreadId)
 import Control.Monad.Trans.Maybe
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+
 
 -- Implementation against actual network sockets
 
@@ -94,26 +95,48 @@ wrapSocket ids transport socket = do
           , socketBuffer      = buffer
           , socketHandle      = socket }
 
+-- TODO: Clean up resources on exception or completion (auto-close things)
+
 runProcess
   :: LocalLogger IO
-  -> (forall socket. Process socket a)
-  -> IO (Maybe a)
-runProcess LocalLogger{logEvent} (Process program) = do
+  -> (forall socket. Process socket result)
+  -> IO (Maybe result)
+runProcess LocalLogger{logEvent} process = do
+  threadIds <- enumerateFrom (ThreadId 0)
   socketIds <- enumerateFrom (SocketId 0)
-  runMaybeT $ interpretWithMonad (evalLogging socketIds) program
+  run threadIds socketIds process
   where
-    evalLogging :: Enumerator SocketId -> SysCall Socket a -> MaybeT IO a
-    evalLogging socketIds syscall =
+    run :: Enumerator ThreadId
+        -> Enumerator SocketId
+        -> Process Socket a
+        -> IO (Maybe a)
+    run threadIds socketIds (Process program) = do
+      threadId <- next threadIds
+      runMaybeT $
+        interpretWithMonad
+          (evalLogging threadId threadIds socketIds)
+          program
+
+    evalLogging
+      :: ThreadId
+      -> Enumerator ThreadId
+      -> Enumerator SocketId
+      -> SysCall Socket a
+      -> MaybeT IO a
+    evalLogging threadId threadIds socketIds syscall =
       MaybeT $ catch
-        (do result <- eval socketIds syscall
-            logEvent (LocalEvent syscall (Right result))
+        (do result <- eval threadIds socketIds syscall
+            logEvent threadId (LocalEvent syscall (Right result))
             return (Just result))
         (\(e :: S.SocketException) ->
-           do logEvent (LocalEvent syscall (Left e))
+           do logEvent threadId (LocalEvent syscall (Left e))
               return Nothing)
 
-    eval :: Enumerator SocketId -> SysCall Socket a -> IO a
-    eval socketIds = \case
+    eval :: Enumerator ThreadId
+         -> Enumerator SocketId
+         -> SysCall Socket a
+         -> IO a
+    eval threadIds socketIds = \case
       Connect transport addressType address port ->
         withAddressFamily addressType $ do
           socket@Socket{socketHandle = s} <-
@@ -181,6 +204,9 @@ runProcess LocalLogger{logEvent} (Process program) = do
 
       Close Socket{socketHandle = s} ->
         S.close s
+
+      Fork thread -> do
+        void $ forkIO (void $ run threadIds socketIds thread)
 
       LogMessage _ ->
         mempty

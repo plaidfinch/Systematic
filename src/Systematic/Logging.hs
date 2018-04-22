@@ -1,12 +1,13 @@
 module Systematic.Logging
   ( SocketId(..)
+  , ThreadId(..)
   , SocketInfo(..)
   , LocalLogger(..)
   , LocalEvent(..)
   , logAsHaskell
   ) where
 
-import Systematic
+import Systematic.Language
 import Systematic.CError
 
 import System.Socket (SocketException(..))
@@ -26,7 +27,7 @@ newtype LocalLogger m
   = LocalLogger
       { logEvent
           :: forall socket. SocketInfo socket
-          => LocalEvent socket -> m () }
+          => ThreadId -> LocalEvent socket -> m () }
 
 -- A local event is a syscall paired with either its result or an exception
 data LocalEvent socket where
@@ -41,9 +42,9 @@ logAsHaskell
   -> (forall a. (Typeable a, Show a) => a -> m ())
   -> LocalLogger m
 logAsHaskell localLog messageLog =
-  LocalLogger $ \case
+  LocalLogger $ \threadId -> \case
     LocalEvent syscall result -> do
-      localLog (prettySysCall (("s" ++) . show) syscall result)
+      localLog (prettySysCall (("s" ++) . show) threadId syscall result)
       case syscall of
         LogMessage message -> messageLog message
         _ -> return ()
@@ -51,11 +52,13 @@ logAsHaskell localLog messageLog =
 prettySysCall
   :: SocketInfo socket
   => (Integer -> String)
+  -> ThreadId
   -> SysCall socket a
   -> Either SocketException a
   -> String
-prettySysCall socketName syscall result =
-  prettyCall ++ maybeExceptionComment
+prettySysCall socketName (ThreadId threadId) syscall result =
+  let outputLines = lines $ prettyCall ++ maybeExceptionComment
+  in unlines $ map (++ ("    -- " ++ show threadId)) outputLines
   where
     prettyCall = case syscall of
       Connect transport addressType address port ->
@@ -105,6 +108,8 @@ prettySysCall socketName syscall result =
         concat [ "close "
                , nameSocket socket
                ]
+      Fork _ ->
+        "-- Forked thread " ++ show result
       LogMessage message ->
         concat [ "logMessage @"
                , showsPrec 11 (typeOf message) ""

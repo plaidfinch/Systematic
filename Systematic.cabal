@@ -22,6 +22,7 @@ library
     Haskell2010
 
   exposed-modules: Systematic
+                   Systematic.Language
                    Systematic.CError
                    Systematic.Enumerator
                    Systematic.Backend
