@@ -45,14 +45,15 @@ instance HasThreads m => HasThreads (Logging m) where
 
 instance HasMemory m => HasMemory (Logging m) where
   type Ref (Logging m) = Ref m
-  newRef    = lift    newRef
+  newRef    = lift .  newRef
   readRef   = lift .  readRef
   writeRef  = lift .: writeRef
 
   type Var (Logging m) = Var m
-  newVar  = lift    newVar
-  takeVar = lift .  takeVar
-  putVar  = lift .: putVar
+  newVar      = lift .  newVar
+  newEmptyVar = lift    newEmptyVar
+  takeVar     = lift .  takeVar
+  putVar      = lift .: putVar
 
   type Channel (Logging m) = Channel m
   newChan   = lift    newChan
@@ -66,5 +67,4 @@ instance HasSockets m => HasSockets (Logging m) where
   accept       = lift .  accept
   send         = lift .: send
   receive      = lift .  receive
-  receiveUntil = lift .: receiveUntil
   close        = lift .  close

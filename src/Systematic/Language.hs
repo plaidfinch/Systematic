@@ -12,6 +12,7 @@ module Systematic.Language
   , AddressType(..)
   , showAddress
   , Port(..)
+  , Backend
   , ThreadInfo(..)
   , HasThreads(..)
   , HasLog(..)
@@ -22,8 +23,6 @@ module Systematic.Language
   , HasSockets(..)
   , SocketInfo(..)
   , sendLine
-  , receiveLine
-  , HasFiles(..)
   ) where
 
 import Data.ByteString ( ByteString )
@@ -97,6 +96,11 @@ newtype Port
   = Port Word16
   deriving stock (Eq, Ord, Show)
 
+-- TODO: add back the log, implement it for backend(s)
+-- What a backend has to support
+type Backend m =
+  ({-HasLog m,-} HasMemory m, HasSockets m, HasThreads m)
+
 -- Types of things that have unique ids we can query
 class ThreadInfo  tid     where threadId  :: tid             -> Int
 class RefInfo     ref     where refId     :: ref a           -> Int
@@ -116,13 +120,13 @@ class (RefInfo (Ref m), VarInfo (Var m), ChannelInfo (Channel m), Monad m)
   => HasMemory m where
 
   type Ref m :: Type -> Type
-  newRef    :: a -> m (Ref m a)
+  newRef    :: Show a => a -> m (Ref m a)
   readRef   :: Show a => Ref m a -> m a
   writeRef  :: Show a => Ref m a -> a -> m ()
 
   type Var m :: Type -> Type
-  newVar      :: a -> m (Var m a)
-  newEmptyVar :: m (Var m a)
+  newVar      :: Show a => a -> m (Var m a)
+  newEmptyVar :: Show a => m (Var m a)
   takeVar     :: Show a => Var m a -> m a
   putVar      :: Show a => Var m a -> a -> m ()
 
@@ -136,19 +140,11 @@ class (SocketInfo (Socket m), Monad m) => HasSockets m where
   connect
     :: Transport t -> AddressType f -> Address f -> Port
     -> m (Socket m f t Connected)
-  listen       :: AddressType f -> Port -> m (Socket m f TCP Listening)
-  accept       :: Socket m f TCP Listening -> m (Socket m f TCP Connected)
-  send         :: Socket m f t Connected -> ByteString -> m ()
-  receive      :: Socket m f t Connected -> m ByteString
-  receiveUntil :: Char -> Socket m f t Connected -> m (Maybe ByteString)
-  close        :: Socket m f t mode -> m ()
-
--- TODO: Is this the right interface?
-class Monad m => HasFiles m where
-  readFile   :: FilePath -> m ByteString
-  writeFile  :: FilePath -> ByteString -> m ()
-  appendFile :: FilePath -> ByteString -> m ()
-  deleteFile :: FilePath -> m ()
+  listen  :: AddressType f -> Port -> m (Socket m f TCP Listening)
+  accept  :: Socket m f TCP Listening -> m (Socket m f TCP Connected)
+  send    :: Socket m f t Connected -> ByteString -> m ()
+  receive :: Socket m f t Connected -> m ByteString
+  close   :: Socket m f t mode -> m ()
 
 sendLine
   :: HasSockets m
@@ -156,10 +152,3 @@ sendLine
   -> m ()
 sendLine socket =
   send socket . (<> "\n")
-
-receiveLine
-  :: HasSockets m
-  => Socket m f t Connected
-  -> m (Maybe ByteString)
-receiveLine =
-  receiveUntil '\n'

@@ -1,13 +1,10 @@
-module Systematic
-  ( module Systematic.Language
-  , module Systematic.Logging
-  , module Systematic.CError
-  , module Systematic.Enumerator
-  , module Systematic.LogCommands
-  ) where
+module Systematic (module X) where
 
-import Systematic.Language
-import Systematic.Logging
-import Systematic.CError
-import Systematic.Enumerator
-import Systematic.LogCommands
+import Systematic.Language        as X hiding (HasSockets(..), sendLine)
+import Systematic.Language        as X (HasSockets)
+import Systematic.Socket.Buffered as X
+
+import Systematic.Logging     as X
+import Systematic.CError      as X
+import Systematic.Enumerator  as X
+import Systematic.LogCommands as X

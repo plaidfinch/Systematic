@@ -1,7 +1,7 @@
 module Main where
 
 import Systematic
-import qualified Systematic.Real as Real
+import qualified Systematic.Backend.Real as Real
 
 import Control.Monad
 import Control.Monad.IO.Class
@@ -9,10 +9,11 @@ import Control.Monad.IO.Class
 main :: IO ()
 main = Real.run
      . Real.sockets
+     . Real.memory
      . logCommandsWith (liftIO . putStrLn)
      $ echoServer (Port 10000)
 
-echoServer :: (HasThreads m, HasSockets m) => Port -> m ()
+echoServer :: Backend m => Port -> m ()
 echoServer port = do
   s <- listen IPv4 port
   forever $ do

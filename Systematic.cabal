@@ -15,25 +15,30 @@ extra-source-files:  README.md
 
 library
 
-  hs-source-dirs:
-    src
+  hs-source-dirs:  src
 
   default-language:
     Haskell2010
 
   exposed-modules: Systematic
                    Systematic.Language
+
+                   Systematic.Socket.Raw
+                   Systematic.Socket.Buffered
+
                    Systematic.CError
                    Systematic.Enumerator
+
                    Systematic.Logging
                    Systematic.LogCommands
-                   Systematic.Real
-                   Systematic.Real.Base
-                   Systematic.Real.Sockets
+
+                   Systematic.Backend.Real
+                   Systematic.Backend.Real.Base
+                   Systematic.Backend.Real.Sockets
+                   Systematic.Backend.Real.Memory
 
   build-depends:   base >= 4.7 && < 5,
                    bytestring >= 0.10 && < 0.11,
-                   operational >= 0.2 && < 0.3,
                    socket >= 0.8 && < 0.9,
                    binary >= 0.8 && < 0.9,
                    transformers >= 0.5 && < 0.6,
@@ -82,3 +87,24 @@ library
     DeriveAnyClass, DeriveDataTypeable, DeriveFoldable, DeriveFunctor,
     DeriveGeneric, DeriveLift, DeriveTraversable, DerivingStrategies,
     GeneralizedNewtypeDeriving, StandaloneDeriving
+
+
+executable echo
+
+  hs-source-dirs:      app/Echo
+
+  main-is:             Main.hs
+
+  build-depends:   Systematic,
+                   base >= 4.7 && < 5,
+                   bytestring >= 0.10 && < 0.11
+
+  ghc-options:
+    -Wall
+    -Wincomplete-uni-patterns
+    -Wincomplete-record-updates
+    -Wredundant-constraints
+    -Wno-unticked-promoted-constructors
+
+  default-extensions:
+    LambdaCase

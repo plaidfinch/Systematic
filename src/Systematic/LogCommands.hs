@@ -92,7 +92,13 @@ instance (HasLog m, MonadCatch m) => HasLog (LogCommands m) where
 
 instance (HasMemory m, MonadCatch m) => HasMemory (LogCommands m) where
   type Ref (LogCommands m) = Ref m
-  newRef = logCommand (Just . nameRef) newRef "newRef"
+  newRef val =
+    logCommand
+      (Just . nameRef)
+      (newRef val) $
+      concat [ "newRef "
+             , show val
+             ]
   readRef ref =
     logCommand just_show
       (readRef ref) $
@@ -104,11 +110,23 @@ instance (HasMemory m, MonadCatch m) => HasMemory (LogCommands m) where
       (writeRef ref val) $
       concat [ "writeRef "
              , nameRef ref
+             , " "
              , showWithParens val
              ]
 
   type Var (LogCommands m) = Var m
-  newVar = logCommand (Just . nameVar) newVar "newVar"
+  newVar val =
+    logCommand
+      (Just . nameVar)
+      (newVar val) $
+      concat [ "newVar "
+             , show val
+             ]
+  newEmptyVar =
+    logCommand
+      (Just . nameVar)
+      newEmptyVar
+      "newEmptyVar"
   takeVar var =
     logCommand just_show
       (takeVar var) $
@@ -120,6 +138,7 @@ instance (HasMemory m, MonadCatch m) => HasMemory (LogCommands m) where
       (putVar var val) $
       concat [ "putVar "
              , nameVar var
+             , " "
              , showWithParens val
              ]
 
@@ -136,6 +155,7 @@ instance (HasMemory m, MonadCatch m) => HasMemory (LogCommands m) where
       (writeChan chan val) $
       concat [ "writeChan "
              , nameChannel chan
+             , " "
              , showWithParens val
              ]
 
@@ -179,14 +199,6 @@ instance (HasSockets m, MonadCatch m) => HasSockets (LogCommands m) where
     logCommand just_show
       (receive socket) $
       concat [ "receive "
-             , nameSocket socket
-             ]
-  receiveUntil char socket =
-    logCommand just_show
-      (receiveUntil char socket) $
-      concat [ "receiveUntil "
-             , showWithParens char
-             , " "
              , nameSocket socket
              ]
   close socket =
