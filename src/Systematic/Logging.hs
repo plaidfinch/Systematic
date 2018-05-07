@@ -1,130 +1,70 @@
 module Systematic.Logging
-  ( SocketId(..)
-  , ThreadId(..)
-  , SocketInfo(..)
-  , LocalLogger(..)
-  , LocalEvent(..)
-  , logAsHaskell
+  ( Logging, loggingWith
   ) where
 
 import Systematic.Language
-import Systematic.CError
 
-import System.Socket (SocketException(..))
 import Data.Typeable
+import Data.Coerce
+import Control.Monad.IO.Class
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Reader
 
--- For printing and logging purposes, every socket should have a unique ID
-newtype SocketId
-  = SocketId Integer
-  deriving (Eq, Ord, Show, Enum)
 
--- We require that any runnable thing have such a unique ID
-class SocketInfo socket where
-  socketId :: socket f t mode -> SocketId
+newtype Logging m a
+  = Logging (ReaderT (Logger m) m a)
+  deriving newtype (Functor, Applicative, Monad, MonadIO)
 
--- How to log local events?
-newtype LocalLogger m
-  = LocalLogger
-      { logEvent
-          :: forall socket. SocketInfo socket
-          => ThreadId -> LocalEvent socket -> m () }
+newtype Logger m
+  = Logger (forall a. (Typeable a, Show a) => a -> m ())
 
--- A local event is a syscall paired with either its result or an exception
-data LocalEvent socket where
-  LocalEvent
-    :: SysCall socket a
-    -> Either SocketException a
-    -> LocalEvent socket
+withLogger :: (Logger m -> m a) -> Logging m a
+withLogger = coerce
 
-logAsHaskell
-  :: Monad m
-  => (String -> m ())
-  -> (forall a. (Typeable a, Show a) => a -> m ())
-  -> LocalLogger m
-logAsHaskell localLog messageLog =
-  LocalLogger $ \threadId -> \case
-    LocalEvent syscall result -> do
-      localLog (prettySysCall (("s" ++) . show) threadId syscall result)
-      case syscall of
-        LogMessage message -> messageLog message
-        _ -> return ()
+loggingWith
+  :: (forall x. (Typeable x, Show x) => x -> m ()) -> Logging m a -> m a
+loggingWith logger action =
+  coerce action (Logger logger)
 
-prettySysCall
-  :: SocketInfo socket
-  => (Integer -> String)
-  -> ThreadId
-  -> SysCall socket a
-  -> Either SocketException a
-  -> String
-prettySysCall socketName (ThreadId threadId) syscall result =
-  let outputLines = lines $ prettyCall ++ maybeExceptionComment
-  in unlines $ map (++ ("    -- " ++ show threadId)) outputLines
-  where
-    prettyCall = case syscall of
-      Connect transport addressType address port ->
-        concat [ maybeBind nameSocket result
-               , "connect "
-               , show transport
-               , " "
-               , show addressType
-               , " "
-               , showAddress addressType address
-               , " ("
-               , show port
-               , ")"
-               ]
-      Listen addressType port ->
-        concat [ maybeBind nameSocket result
-               , "listen "
-               , show addressType
-               , " ("
-               , show port
-               , ")"
-               ]
-      Accept socket ->
-        concat [ maybeBind nameSocket result
-               , "accept "
-               , nameSocket socket
-               ]
-      Send socket string ->
-        concat [ "send "
-               , nameSocket socket
-               , " "
-               , show string
-               ]
-      Receive socket ->
-        concat [ maybeBind show result
-               , "receive "
-               , nameSocket socket
-               ]
-      ReceiveUntil char socket ->
-        concat [ maybeBind show result
-               , "receiveUntil "
-               , show char
-               , " "
-               , nameSocket socket
-               ]
-      Close socket ->
-        concat [ "close "
-               , nameSocket socket
-               ]
-      Fork _ ->
-        "-- Forked thread " ++ show result
-      LogMessage message ->
-        concat [ "logMessage @"
-               , showsPrec 11 (typeOf message) ""
-               , " "
-               , showsPrec 11 message ""
-               ]
+instance Monad m => HasLog (Logging m) where
+  log message = Logging . ReaderT $
+    \(Logger logger) -> logger message
 
-    maybeExceptionComment = case result of
-      Right{} -> ""
-      Left (SocketException errorCode) ->
-        "\n-- *** Error " ++ show errorCode ++ ": " ++ describeCError errorCode
 
-    maybeBind :: (r -> String) -> Either e r -> String
-    maybeBind display =
-      either (const "") ((++ " <- ") . display)
+-- Boilerplate
 
-    nameSocket :: SocketInfo socket => socket f t mode -> String
-    nameSocket (socketId -> SocketId i) = socketName i
+instance MonadTrans Logging where
+  lift = Logging . lift
+
+instance HasThreads m => HasThreads (Logging m) where
+  type ThreadId (Logging m) = ThreadId m
+  fork process =
+    withLogger $ \(Logger logger) ->
+      fork $ loggingWith logger process
+  kill = lift . kill
+
+instance HasMemory m => HasMemory (Logging m) where
+  type Ref (Logging m) = Ref m
+  newRef    = lift    newRef
+  readRef   = lift .  readRef
+  writeRef  = lift .: writeRef
+
+  type Var (Logging m) = Var m
+  newVar  = lift    newVar
+  takeVar = lift .  takeVar
+  putVar  = lift .: putVar
+
+  type Channel (Logging m) = Channel m
+  newChan   = lift    newChan
+  readChan  = lift .  readChan
+  writeChan = lift .: writeChan
+
+instance HasSockets m => HasSockets (Logging m) where
+  type Socket (Logging m) = Socket m
+  connect      = (lift .:) .: connect
+  listen       = lift .: listen
+  accept       = lift .  accept
+  send         = lift .: send
+  receive      = lift .  receive
+  receiveUntil = lift .: receiveUntil
+  close        = lift .  close

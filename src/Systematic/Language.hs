@@ -1,41 +1,46 @@
+{-# OPTIONS_GHC -Wno-redundant-constraints -Wno-missing-methods #-}
+
 module Systematic.Language
-  ( TCP
+  ( (.:)
+  , TCP
   , UDP
   , IPv4
   , IPv6
-  , Process(..)
-  , SysCall(..)
   , Mode(..)
   , Transport(..)
   , HasAddress(..)
   , AddressType(..)
   , showAddress
   , Port(..)
-  , ThreadId(..)
-  , call
-  , connect
-  , listen
-  , accept
-  , send
+  , ThreadInfo(..)
+  , HasThreads(..)
+  , HasLog(..)
+  , RefInfo(..)
+  , VarInfo(..)
+  , ChannelInfo(..)
+  , HasMemory(..)
+  , HasSockets(..)
+  , SocketInfo(..)
   , sendLine
-  , receive
-  , receiveUntil
   , receiveLine
-  , close
-  , fork
-  , logMessage
+  , HasFiles(..)
   ) where
 
 import Data.ByteString ( ByteString )
 import Data.Binary
-import Control.Monad.Operational as Operational
 import Type.Reflection
+import Data.Kind
 import Data.Monoid
 
 import qualified System.Socket.Family.Inet   ( Inet )
 import qualified System.Socket.Family.Inet6  ( Inet6 )
 import qualified System.Socket.Type.Stream   ( Stream )
 import qualified System.Socket.Type.Datagram ( Datagram )
+
+
+-- TODO: This shouldn't live here
+(.:) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
+f .: g = (f .) . g
 
 -- Type synonyms we export for simplifying the System.Socket interface
 type TCP  = System.Socket.Type.Stream.Stream
@@ -92,124 +97,69 @@ newtype Port
   = Port Word16
   deriving stock (Eq, Ord, Show)
 
--- Threads are numbered sequentially from 0
-newtype ThreadId
-  = ThreadId Integer
-  deriving (Eq, Ord, Show, Enum)
+-- Types of things that have unique ids we can query
+class ThreadInfo  tid     where threadId  :: tid             -> Int
+class RefInfo     ref     where refId     :: ref a           -> Int
+class VarInfo     var     where varId     :: var a           -> Int
+class ChannelInfo channel where channelId :: channel a       -> Int
+class SocketInfo  socket  where socketId  :: socket f t mode -> Int
 
--- Our actual programs will be written in the Process monad
-newtype Process socket a
-  = Process (Program (SysCall socket) a)
-  deriving newtype (Functor, Applicative, Monad)
+class (ThreadInfo (ThreadId m), Monad m) => HasThreads m where
+  type ThreadId m :: Type
+  fork :: m a -> m (ThreadId m)
+  kill :: ThreadId m -> m ()
 
--- The set of commands available to programs
-data SysCall socket a where
-  Connect
-    :: Transport t
-    -> AddressType f
-    -> Address f
-    -> Port
-    -> SysCall socket (socket f t Connected)
-  Listen
-    :: AddressType f
-    -> Port
-    -> SysCall socket (socket f TCP Listening)
-  Accept
-    :: socket f TCP Listening
-    -> SysCall socket (socket f TCP Connected)
-  Send
-    :: socket f t Connected
-    -> ByteString
-    -> SysCall socket ()
-  Receive  -- TODO: put size back in receive
-    :: socket f t Connected
-    -> SysCall socket ByteString
-  ReceiveUntil
-    :: Char
-    -> socket f t Connected
-    -> SysCall socket ByteString
-  Close
-    :: socket f t mode
-    -> SysCall socket ()
-  Fork
-    :: Process socket ()
-    -> SysCall socket ()
-  LogMessage
-    :: (Typeable message, Show message)
-    => message
-    -> SysCall socket ()
+class Monad m => HasLog m where
+  log :: (Typeable message, Show message) => message -> m ()
 
--- TODO: Add threads to the DSL
--- Should it log which thread does each line?
+class (RefInfo (Ref m), VarInfo (Var m), ChannelInfo (Channel m), Monad m)
+  => HasMemory m where
 
-call :: SysCall socket a -> Process socket a
-call = Process . Operational.singleton
+  type Ref m :: Type -> Type
+  newRef    :: a -> m (Ref m a)
+  readRef   :: Show a => Ref m a -> m a
+  writeRef  :: Show a => Ref m a -> a -> m ()
 
-connect
-  :: Transport t
-  -> AddressType f
-  -> Address f
-  -> Port
-  -> Process socket (socket f t Connected)
-connect transport addressType address port =
-  call (Connect transport addressType address port)
+  type Var m :: Type -> Type
+  newVar      :: a -> m (Var m a)
+  newEmptyVar :: m (Var m a)
+  takeVar     :: Show a => Var m a -> m a
+  putVar      :: Show a => Var m a -> a -> m ()
 
-listen
-  :: AddressType f
-  -> Port
-  -> Process socket (socket f TCP Listening)
-listen addressType port =
-  call (Listen addressType port)
+  type Channel m :: Type -> Type
+  newChan   :: m (Channel m a)
+  readChan  :: Show a => Channel m a -> m a
+  writeChan :: Show a => Channel m a -> a -> m ()
 
-accept
-  :: socket f TCP Listening
-  -> Process socket (socket f TCP Connected)
-accept socket =
-  call (Accept socket)
+class (SocketInfo (Socket m), Monad m) => HasSockets m where
+  type Socket m :: Type -> Type -> Mode -> Type
+  connect
+    :: Transport t -> AddressType f -> Address f -> Port
+    -> m (Socket m f t Connected)
+  listen       :: AddressType f -> Port -> m (Socket m f TCP Listening)
+  accept       :: Socket m f TCP Listening -> m (Socket m f TCP Connected)
+  send         :: Socket m f t Connected -> ByteString -> m ()
+  receive      :: Socket m f t Connected -> m ByteString
+  receiveUntil :: Char -> Socket m f t Connected -> m (Maybe ByteString)
+  close        :: Socket m f t mode -> m ()
 
-send, sendLine
-  :: socket f t Connected
-  -> ByteString
-  -> Process socket ()
-send socket bytestring =
-  call (Send socket bytestring)
+-- TODO: Is this the right interface?
+class Monad m => HasFiles m where
+  readFile   :: FilePath -> m ByteString
+  writeFile  :: FilePath -> ByteString -> m ()
+  appendFile :: FilePath -> ByteString -> m ()
+  deleteFile :: FilePath -> m ()
 
+sendLine
+  :: HasSockets m
+  => Socket m f t Connected -> ByteString
+  -> m ()
 sendLine socket =
   send socket . (<> "\n")
 
-receive, receiveLine
-  :: socket f t Connected
-  -> Process socket ByteString
-receive socket =
-  call (Receive socket)
-
+receiveLine
+  :: HasSockets m
+  => Socket m f t Connected
+  -> m (Maybe ByteString)
 receiveLine =
   receiveUntil '\n'
-
-receiveUntil
-  :: Char
-  -> socket f t Connected
-  -> Process socket ByteString
-receiveUntil char socket =
-  call (ReceiveUntil char socket)
-
-close
-  :: socket f t mode
-  -> Process socket ()
-close socket =
-  call (Close socket)
-
-fork
-  :: Process socket ()
-  -> Process socket ()
-fork process =
-  call (Fork process)
-
-logMessage
-  :: (Typeable message, Show message)
-  => message
-  -> Process socket ()
-logMessage message =
-  call (LogMessage message)
-
--- TODO: Custom type errors?

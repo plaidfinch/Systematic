@@ -25,9 +25,11 @@ library
                    Systematic.Language
                    Systematic.CError
                    Systematic.Enumerator
-                   Systematic.Backend
-                   Systematic.Backend.IO
                    Systematic.Logging
+                   Systematic.LogCommands
+                   Systematic.Real
+                   Systematic.Real.Base
+                   Systematic.Real.Sockets
 
   build-depends:   base >= 4.7 && < 5,
                    bytestring >= 0.10 && < 0.11,
@@ -36,7 +38,9 @@ library
                    binary >= 0.8 && < 0.9,
                    transformers >= 0.5 && < 0.6,
                    stm >= 2.4 && < 2.5,
-                   containers >= 0.5 && < 0.6
+                   containers >= 0.5 && < 0.6,
+                   exceptions >= 0.8 && < 0.9,
+                   mtl >= 2.2 && < 2.3
 
   ghc-options:
     -Wall
