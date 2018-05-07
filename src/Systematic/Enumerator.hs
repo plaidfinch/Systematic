@@ -16,6 +16,9 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.Class
 import Control.Monad.Catch
+import Control.Monad.Fix
+
+import Systematic.Language
 
 newtype Enumerator a
   = Enumerator (IORef a)
@@ -35,8 +38,10 @@ nextEnum (Enumerator ref) =
 
 newtype EnumeratorT e m a
   = EnumeratorT (ReaderT (Enumerator e) m a)
-  deriving newtype (Functor, Applicative, Monad,
-                    MonadIO, MonadThrow, MonadCatch)
+  deriving newtype
+    ( Functor, Applicative, Monad
+    , MonadIO, MonadThrow, MonadCatch, MonadFix
+    , HasLog, HasTextLog, HasThreads, HasSockets, HasMemory )
 
 instance MonadTrans (EnumeratorT e) where
   lift = EnumeratorT . ReaderT . const

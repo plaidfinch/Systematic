@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 
 module Systematic.LogCommands
-  ( LogCommands, logCommandsWith
+  ( LogCommands, logCommandsWith, logCommands
   ) where
 
 import Systematic.Language
@@ -10,6 +10,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Catch
+import Control.Monad.Fix
 
 import Data.Coerce
 import Data.Typeable
@@ -18,13 +19,18 @@ import Prelude hiding (log)
 
 
 newtype LogCommands m a
-  = LogCommands (ReaderT (String -> m ()) m a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO)
+  = LogCommands (ReaderT (String -> String) m a)
+  deriving newtype
+    ( Functor, Applicative, Monad
+    , MonadIO, MonadThrow, MonadCatch, MonadFix )
 
-withLogger :: ((String -> m ()) -> m a) -> LogCommands m a
+withLogger :: ((String -> String) -> m a) -> LogCommands m a
 withLogger = coerce
 
-logCommandsWith :: (String -> m ()) -> LogCommands m a -> m a
+logCommands :: LogCommands m a -> m a
+logCommands = logCommandsWith id
+
+logCommandsWith :: (String -> String) -> LogCommands m a -> m a
 logCommandsWith logger action =
   coerce action logger
 
@@ -32,7 +38,8 @@ instance MonadTrans LogCommands where
   lift = LogCommands . lift
 
 logCommand
-  :: MonadCatch m => (a -> Maybe String) -> m a -> String -> LogCommands m a
+  :: (HasTextLog m, MonadCatch m)
+  => (a -> Maybe String) -> m a -> String -> LogCommands m a
 logCommand showResult action commandString =
   withLogger $ \logger ->
     catch
@@ -44,10 +51,12 @@ logCommand showResult action commandString =
          throwM exception)
   where
     logSuccess logger result =
-      logger $ maybe "" (++ " <- ") (showResult result) ++ commandString
+      appendLogString . logger $
+        maybe "" (++ " <- ") (showResult result) ++ commandString
 
     logFailure logger e =
-      logger (commandString ++ "\n-- *** Exception: " ++ show e)
+      appendLogString . logger $
+        commandString ++ "\n-- *** Exception: " ++ show e
 
 name :: Show b => String -> (a -> b) -> a -> String
 name prefix convert = (prefix ++) . show . convert
@@ -58,12 +67,20 @@ nameVar     = name "v" varId
 nameChannel = name "c" channelId
 nameSocket  = name "s" socketId
 
-instance (HasThreads m, MonadCatch m) => HasThreads (LogCommands m) where
+padRight :: Int -> String -> String
+padRight n string =
+  string ++ replicate (n - length string) ' '
+
+instance (HasThreads m, HasTextLog m, MonadCatch m, MonadFix m)
+  => HasThreads (LogCommands m) where
+
   type ThreadId (LogCommands m) = ThreadId m
   fork process =
-    withLogger $ \logger -> do
-      tid <- fork (logCommandsWith logger process)
-      logger ("-- Forked thread " ++ nameThread tid)
+    withLogger $ \logger -> mdo
+      let forkedLogger =
+            logger . (++ (" -- t" ++ show (threadId tid))) . padRight 60
+      tid <- fork (logCommandsWith forkedLogger process)
+      appendLogString ("-- Forked thread " ++ nameThread tid)
       return tid
   kill tid =
     logCommand don't_show (kill tid) $
@@ -80,7 +97,7 @@ don't_show = const Nothing
 just_show :: Show a => a -> Maybe String
 just_show = Just . show
 
-instance (HasLog m, MonadCatch m) => HasLog (LogCommands m) where
+instance (HasLog m, HasTextLog m, MonadCatch m) => HasLog (LogCommands m) where
   log message =
     logCommand don't_show
       (log message) $
@@ -90,7 +107,9 @@ instance (HasLog m, MonadCatch m) => HasLog (LogCommands m) where
              , showWithParens message
              ]
 
-instance (HasMemory m, MonadCatch m) => HasMemory (LogCommands m) where
+instance (HasMemory m, HasTextLog m, MonadCatch m)
+  => HasMemory (LogCommands m) where
+
   type Ref (LogCommands m) = Ref m
   newRef val =
     logCommand
@@ -159,7 +178,9 @@ instance (HasMemory m, MonadCatch m) => HasMemory (LogCommands m) where
              , showWithParens val
              ]
 
-instance (HasSockets m, MonadCatch m) => HasSockets (LogCommands m) where
+instance (HasSockets m, HasTextLog m, MonadCatch m)
+  => HasSockets (LogCommands m) where
+
   type Socket (LogCommands m) = Socket m
   connect transport addressType address port =
     logCommand (Just . nameSocket)

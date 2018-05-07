@@ -16,6 +16,7 @@ module Systematic.Language
   , ThreadInfo(..)
   , HasThreads(..)
   , HasLog(..)
+  , HasTextLog(..)
   , RefInfo(..)
   , VarInfo(..)
   , ChannelInfo(..)
@@ -30,6 +31,12 @@ import Data.Binary
 import Type.Reflection
 import Data.Kind
 import Data.Monoid
+
+import Control.Monad.Trans.Class
+import Control.Monad.Trans.Reader
+import Data.Functor
+
+import Prelude hiding (log)
 
 import qualified System.Socket.Family.Inet   ( Inet )
 import qualified System.Socket.Family.Inet6  ( Inet6 )
@@ -116,6 +123,9 @@ class (ThreadInfo (ThreadId m), Monad m) => HasThreads m where
 class Monad m => HasLog m where
   log :: (Typeable message, Show message) => message -> m ()
 
+class Monad m => HasTextLog m where
+  appendLogString :: String -> m ()
+
 class (RefInfo (Ref m), VarInfo (Var m), ChannelInfo (Channel m), Monad m)
   => HasMemory m where
 
@@ -152,3 +162,46 @@ sendLine
   -> m ()
 sendLine socket =
   send socket . (<> "\n")
+
+
+-- It's frequently useful to have instances for ReaderT
+
+instance HasLog m => HasLog (ReaderT r m) where
+  log = lift . log
+
+instance HasTextLog m => HasTextLog (ReaderT r m) where
+  appendLogString = lift . appendLogString
+
+instance HasMemory m => HasMemory (ReaderT r m) where
+  type Ref (ReaderT r m) = Ref m
+  newRef    = lift .  newRef
+  readRef   = lift .  readRef
+  writeRef  = lift .: writeRef
+
+  type Var (ReaderT r m) = Var m
+  newVar      = lift .  newVar
+  newEmptyVar = lift    newEmptyVar
+  takeVar     = lift .  takeVar
+  putVar      = lift .: putVar
+
+  type Channel (ReaderT r m) = Channel m
+  newChan   = lift    newChan
+  readChan  = lift .  readChan
+  writeChan = lift .: writeChan
+
+instance HasThreads m => HasThreads (ReaderT r m) where
+  type ThreadId (ReaderT r m) = ThreadId m
+  fork process = do
+    r   <- ask
+    tid <- lift . fork . void $ runReaderT process r
+    return tid
+  kill = lift . kill
+
+instance HasSockets m => HasSockets (ReaderT r m) where
+  type Socket (ReaderT r m) = Socket m
+  connect      = (lift .:) .: connect
+  listen       = lift .: listen
+  accept       = lift .  accept
+  send         = lift .: send
+  receive      = lift .  receive
+  close        = lift .  close

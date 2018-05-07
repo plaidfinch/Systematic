@@ -10,9 +10,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Catch
-
-import Data.Functor
-import Data.Coerce
+import Control.Monad.Fix
 
 import Control.Concurrent as GHC hiding (ThreadId)
 import Data.IORef
@@ -34,8 +32,10 @@ initializeAllocCounters =
 
 newtype Memory m a
   = Memory (ReaderT AllocCounters m a)
-  deriving newtype (Functor, Applicative, Monad,
-                    MonadIO, MonadThrow, MonadCatch)
+  deriving newtype
+    ( Functor, Applicative, Monad
+    , MonadIO, MonadThrow, MonadCatch, MonadFix
+    , HasLog, HasTextLog, HasThreads, HasSockets )
 
 instance MonadTrans Memory where
   lift = Memory . lift
@@ -43,10 +43,6 @@ instance MonadTrans Memory where
 memory :: MonadIO m => Memory m a -> m a
 memory (Memory action) =
   runReaderT action =<< initializeAllocCounters
-
-withAllocCounters :: AllocCounters -> Memory m a -> m a
-withAllocCounters counters action =
-  coerce action counters
 
 data RealRef a
   = RealRef
@@ -106,23 +102,3 @@ instance MonadIO m => HasMemory (Memory m) where
     liftIO $ GHC.readChan wrappedChan
   writeChan RealChan{wrappedChan} val =
     liftIO $ GHC.writeChan wrappedChan val
-
--- Boilerplate
-
-instance HasThreads m => HasThreads (Memory m) where
-  type ThreadId (Memory m) = ThreadId m
-  fork process = Memory $ do
-    allocCounters <- ask
-    tid <- lift . fork . void $
-             withAllocCounters allocCounters process
-    return tid
-  kill = lift . kill
-
-instance HasSockets m => HasSockets (Memory m) where
-  type Socket (Memory m) = Socket m
-  connect      = (lift .:) .: connect
-  listen       = lift .: listen
-  accept       = lift .  accept
-  send         = lift .: send
-  receive      = lift .  receive
-  close        = lift .  close

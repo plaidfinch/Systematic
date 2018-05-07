@@ -12,6 +12,7 @@ import qualified System.Socket.Type.Stream      as S
 import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Catch
+import Control.Monad.Fix
 
 import Data.Function
 import Data.Monoid
@@ -24,8 +25,13 @@ import Prelude hiding (log)
 
 newtype Sockets m a
   = Sockets (EnumeratorT Int m a)
-  deriving newtype (Functor, Applicative, Monad,
-                    MonadIO, MonadThrow, MonadCatch)
+  deriving newtype
+    ( Functor, Applicative, Monad
+    , MonadIO, MonadThrow, MonadCatch, MonadFix
+    , HasLog, HasTextLog, HasThreads, HasMemory )
+
+instance MonadTrans Sockets where
+  lift = Sockets . lift
 
 sockets :: MonadIO m => Sockets m a -> m a
 sockets (Sockets action) =
@@ -75,6 +81,8 @@ wrapSocket uniqueId transport socket =
     , socketTransport   = transport
     , socketHandle      = socket }
 
+-- TODO: Throw prettier exceptions using the CError module
+
 instance MonadIO m => HasSockets (Sockets m) where
   type Socket (Sockets m) = RealSocket
 
@@ -123,6 +131,8 @@ instance MonadIO m => HasSockets (Sockets m) where
     liftIO $ S.close s
 
 
+-- Utility functions
+
 -- Resolving actual addresses
 actualAddress :: AddressType f -> Address f -> Port -> S.SocketAddress f
 actualAddress IPv4 tuple (Port p) =
@@ -143,8 +153,7 @@ withTransportType :: Transport t -> (S.Type t => r) -> r
 withTransportType TCP k = k
 withTransportType UDP k = k
 
--- Utility functions
-
+-- Split on a character if it is found
 maybeSplit :: Char -> ByteString -> Maybe (ByteString, ByteString)
 maybeSplit char string =
   if BS.length suffix > 0
@@ -152,38 +161,3 @@ maybeSplit char string =
   else Nothing
   where
     (prefix, suffix) = BS.break (== char) string
-
-
--- Boilerplate
-
-instance MonadTrans Sockets where
-  lift = Sockets . lift
-
-instance HasThreads m => HasThreads (Sockets m) where
-  type ThreadId (Sockets m) = ThreadId m
-  fork (Sockets process) = do
-    e <- Sockets enumerator
-    tid <- lift . fork . void $
-             withEnumerator e process
-    return tid
-  kill = lift . kill
-
-instance HasLog m => HasLog (Sockets m) where
-  log = lift . log
-
-instance HasMemory m => HasMemory (Sockets m) where
-  type Ref (Sockets m) = Ref m
-  newRef    = lift .  newRef
-  readRef   = lift .  readRef
-  writeRef  = lift .: writeRef
-
-  type Var (Sockets m) = Var m
-  newVar      = lift .  newVar
-  newEmptyVar = lift    newEmptyVar
-  takeVar     = lift .  takeVar
-  putVar      = lift .: putVar
-
-  type Channel (Sockets m) = Channel m
-  newChan   = lift    newChan
-  readChan  = lift .  readChan
-  writeChan = lift .: writeChan

@@ -9,11 +9,13 @@ import Data.Functor
 
 import Control.Monad.IO.Class
 import Control.Monad.Catch
+import Control.Monad.Fix
+
 
 newtype Base a
   = Base (EnumeratorT Int IO a)
   deriving newtype (Functor, Applicative, Monad,
-                    MonadIO, MonadThrow, MonadCatch)
+                    MonadIO, MonadThrow, MonadCatch, MonadFix)
 
 run :: Base a -> IO a
 run (Base process) =
@@ -35,3 +37,6 @@ instance HasThreads Base where
     return (RealThreadId i tid)
   kill (RealThreadId _ tid) =
     liftIO (killThread tid)
+
+instance HasTextLog Base where
+  appendLogString = liftIO . putStrLn

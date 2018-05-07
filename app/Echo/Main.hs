@@ -4,23 +4,25 @@ import Systematic
 import qualified Systematic.Backend.Real as Real
 
 import Control.Monad
-import Control.Monad.IO.Class
 
 main :: IO ()
 main = Real.run
      . Real.sockets
+     -- . logCommands
      . Real.memory
-     . logCommandsWith (liftIO . putStrLn)
      $ echoServer (Port 10000)
 
 echoServer :: Backend m => Port -> m ()
 echoServer port = do
-  s <- listen IPv4 port
+  listening <- listen IPv4 port
   forever $ do
-    s' <- accept s
-    fork (echo s')
+    connection <- accept listening
+    fork (echo connection)
   where
-    echo s =
-      receiveLine s >>= \case
-        Nothing   -> close s
-        Just line -> sendLine s line >> echo s
+    echo connection = do
+      maybeLine <- receiveLine connection
+      case maybeLine of
+        Nothing   -> close connection
+        Just line -> do
+          sendLine connection line
+          echo connection
