@@ -1,9 +1,30 @@
-module Systematic.CError
-  ( describeCError
+module Systematic.PosixError
+  ( describePosixError
+  , rethrowPosixError
+  , PosixError(..)
   ) where
 
-describeCError :: (Eq n, Num n) => n -> String
-describeCError = \case
+import Control.Monad.Catch
+
+newtype PosixError
+  = PosixError Int
+
+instance Show PosixError where
+  show (PosixError i) =
+    "Error " ++ show i ++ ": " ++ describePosixError i
+
+instance Exception PosixError
+
+rethrowPosixError
+  :: forall e n m a.
+  (Integral n, MonadCatch m, Exception e)
+  => (e -> n) -> m a -> m a
+rethrowPosixError errorNumber action =
+  catch action $ \(e :: e) ->
+    throwM (PosixError (fromIntegral (errorNumber e)))
+
+describePosixError :: (Eq n, Num n) => n -> String
+describePosixError = \case
   0   -> "Success"
   1   -> "Operation not permitted"
   2   -> "No such file or directory"

@@ -2,6 +2,7 @@ module Systematic.Backend.Real.Sockets where
 
 import Systematic.Language
 import Systematic.Enumerator
+import Systematic.PosixError
 
 import qualified System.Socket                  as S
 import qualified System.Socket.Family.Inet      as S
@@ -17,9 +18,12 @@ import Control.Monad.Fix
 import Data.Function
 import Data.Monoid
 import Data.Functor
+import Data.Coerce
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+
+import Foreign.C.Types
 
 import Prelude hiding (log)
 
@@ -35,7 +39,7 @@ instance MonadTrans Sockets where
 
 sockets :: MonadIO m => Sockets m a -> m a
 sockets (Sockets action) =
-  runEnumeratorT 0 action
+    runEnumeratorT 0 action
 
 -- An actual socket, attached to a mutable buffer
 data RealSocket f t (mode :: Mode) where
@@ -81,7 +85,9 @@ wrapSocket uniqueId transport socket =
     , socketTransport   = transport
     , socketHandle      = socket }
 
--- TODO: Throw prettier exceptions using the CError module
+liftSocketIO :: MonadIO m => IO a -> m a
+liftSocketIO =
+  liftIO . rethrowPosixError @S.SocketException (coerce @_ @CInt)
 
 instance MonadIO m => HasSockets (Sockets m) where
   type Socket (Sockets m) = RealSocket
@@ -89,7 +95,7 @@ instance MonadIO m => HasSockets (Sockets m) where
   connect transport addressType address port =
     Sockets $ do
       uniqueId <- next
-      withAddressFamily addressType $ liftIO $ do
+      withAddressFamily addressType $ liftSocketIO $ do
         socket@RealSocket{socketHandle = s} <-
           setupSocket uniqueId transport addressType
         S.connect s (actualAddress addressType address port)
@@ -98,7 +104,7 @@ instance MonadIO m => HasSockets (Sockets m) where
   listen (addressType :: AddressType f) (Port port) =
     Sockets $ do
       uniqueId <- next
-      withAddressFamily addressType $ liftIO $ do
+      withAddressFamily addressType $ liftSocketIO $ do
         socket@RealSocket{socketHandle = s} <-
           setupSocket uniqueId TCP addressType
         let socketAddress :: S.SocketAddress f
@@ -115,20 +121,20 @@ instance MonadIO m => HasSockets (Sockets m) where
   accept RealSocket{socketTransport, socketHandle = s} =
     Sockets $ do
       uniqueId <- next
-      liftIO $ do
+      liftSocketIO $ do
         (s', _) <- S.accept s
         return $ wrapSocket uniqueId socketTransport s'
 
   send RealSocket{socketTransport, socketHandle = s} string =
-    liftIO $ case socketTransport of
+    liftSocketIO $ case socketTransport of
       TCP -> void $ S.sendAll s string S.msgNoSignal
       UDP -> void $ S.send    s string S.msgNoSignal
 
   receive RealSocket{socketHandle = s} =
-    liftIO $ S.receive s requestSize S.msgNoSignal
+    liftSocketIO $ S.receive s requestSize S.msgNoSignal
 
   close RealSocket{socketHandle = s} =
-    liftIO $ S.close s
+    liftSocketIO $ S.close s
 
 
 -- Utility functions

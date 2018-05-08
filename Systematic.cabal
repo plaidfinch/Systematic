@@ -26,7 +26,7 @@ library
                    Systematic.Socket.Raw
                    Systematic.Socket.Buffered
 
-                   Systematic.CError
+                   Systematic.PosixError
                    Systematic.Enumerator
 
                    Systematic.Logging
@@ -103,4 +103,4 @@ executable echo
     -Wincomplete-record-updates
     -Wredundant-constraints
   default-extensions:
-    OverloadedStrings
+    OverloadedStrings, RankNTypes
