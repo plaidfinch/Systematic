@@ -102,5 +102,6 @@ executable echo
     -Wincomplete-uni-patterns
     -Wincomplete-record-updates
     -Wredundant-constraints
+    -Wno-unticked-promoted-constructors
   default-extensions:
     OverloadedStrings, RankNTypes

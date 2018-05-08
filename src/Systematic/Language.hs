@@ -13,6 +13,7 @@ module Systematic.Language
   , showAddress
   , Port(..)
   , Backend
+  , Program(..)
   , ThreadInfo(..)
   , HasThreads(..)
   , HasLog(..)
@@ -107,6 +108,24 @@ newtype Port
 -- What a backend has to support
 type Backend m =
   ({-HasLog m,-} HasMemory m, HasSockets m, HasThreads m)
+
+type Program a
+  = forall m. Backend m => m a
+
+-- newtype Program a
+--   = Program { run :: forall m. Backend m => m a }
+
+-- instance Functor Program where
+--   fmap f (Program p) = Program (fmap f p)
+
+-- instance Applicative Program where
+--   pure a = Program (pure a)
+--   Program f <*> Program a =
+--     Program (f <*> a)
+
+-- instance Monad Program where
+--   return  = pure
+--   a >>= f = Program (run (a >>= f))
 
 -- Types of things that have unique ids we can query
 class ThreadInfo  tid     where threadId  :: tid             -> Int
