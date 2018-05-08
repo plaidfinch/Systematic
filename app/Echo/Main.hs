@@ -32,7 +32,7 @@ echoServer port = do
     echoWith connection = do
       maybeLine <- receiveLine connection
       case maybeLine of
-        Nothing   -> close connection
+        Nothing -> close connection
         Just line -> do
           sendLine connection line
           echoWith connection
