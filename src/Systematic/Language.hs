@@ -13,7 +13,7 @@ module Systematic.Language
   , showAddress
   , Port(..)
   , Backend
-  , Program(..)
+  , Program
   , ThreadInfo(..)
   , HasThreads(..)
   , HasLog(..)
