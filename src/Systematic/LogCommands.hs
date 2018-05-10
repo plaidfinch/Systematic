@@ -27,8 +27,10 @@ newtype LogCommands m a
 withLogger :: ((String -> String) -> m a) -> LogCommands m a
 withLogger = coerce
 
-logCommands :: LogCommands m a -> m a
-logCommands = logCommandsWith id
+logCommands :: HasTextLog m => LogCommands m a -> m a
+logCommands action = do
+  appendLogString "trace = do"
+  logCommandsWith ("  " ++) action
 
 logCommandsWith :: (String -> String) -> LogCommands m a -> m a
 logCommandsWith logger action =
@@ -55,8 +57,9 @@ logCommand showResult action commandString =
         maybe "" (++ " <- ") (showResult result) ++ commandString
 
     logFailure logger e =
-      appendLogString . logger $
-        commandString ++ "\n-- *** Exception: " ++ show e
+      appendLogString $
+        logger commandString ++ "\n" ++
+        logger ("-- *** Exception: " ++ show e)
 
 name :: Show b => String -> (a -> b) -> a -> String
 name prefix convert = (prefix ++) . show . convert
@@ -80,7 +83,7 @@ instance (HasThreads m, HasTextLog m, MonadCatch m, MonadFix m)
       let forkedLogger =
             logger . (++ (" -- t" ++ show (threadId tid))) . padRight 60
       tid <- fork (logCommandsWith forkedLogger process)
-      appendLogString ("-- Forked thread " ++ nameThread tid)
+      appendLogString (logger $ "-- Forked thread " ++ nameThread tid)
       return tid
   kill tid =
     logCommand don't_show (kill tid) $
