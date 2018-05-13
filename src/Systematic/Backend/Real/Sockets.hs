@@ -1,7 +1,6 @@
 module Systematic.Backend.Real.Sockets where
 
 import Systematic.Language
-import Systematic.Enumerator
 import Systematic.PosixError
 
 import qualified System.Socket                  as S
@@ -28,62 +27,43 @@ import Foreign.C.Types
 import Prelude hiding (log)
 
 newtype Sockets m a
-  = Sockets (EnumeratorT Int m a)
+  = Sockets (m a)
   deriving newtype
     ( Functor, Applicative, Monad
     , MonadIO, MonadThrow, MonadCatch, MonadFix
     , HasLog, HasTextLog, HasThreads, HasMemory )
 
 instance MonadTrans Sockets where
-  lift = Sockets . lift
+  lift = Sockets
 
-sockets :: MonadIO m => Sockets m a -> m a
-sockets (Sockets action) =
-    runEnumeratorT 0 action
+sockets :: Sockets m a -> m a
+sockets (Sockets action) = action
 
 -- An actual socket, attached to a mutable buffer
 data RealSocket f t (mode :: Mode) where
   RealSocket
     :: S.Family f
-    => { socketIdentity    :: Int
-       , socketTransport   :: Transport t
+    => { socketTransport   :: Transport t
        , socketHandle      :: S.Socket f t S.Default
        } -> RealSocket f t mode
-
-instance SocketInfo RealSocket where
-  socketId (RealSocket{socketIdentity}) = socketIdentity
 
 -- How to initialize a real buffered socket
 setupSocket
   :: forall f t mode. S.Family f
-  => Int
-  -> Transport t
+  => Transport t
   -> AddressType f
   -> IO (RealSocket f t mode)
-setupSocket uniqueId transport addressType =
+setupSocket transport addressType =
   withTransportType transport $ do
     socket <- S.socket @f @t @S.Default
     S.setSocketOption socket (S.ReuseAddress True)
     case addressType of
       IPv6 -> S.setSocketOption socket (S.V6Only False) :: IO ()
       _    -> mempty :: IO ()
-    return $ wrapSocket uniqueId transport socket
+    return $ RealSocket transport socket
 
 requestSize :: Int
 requestSize = 128
-
--- Wrap an existing real socket in a buffer
-wrapSocket
-  :: S.Family f
-  => Int
-  -> Transport t
-  -> S.Socket f t S.Default
-  -> RealSocket f t mode
-wrapSocket uniqueId transport socket =
-  RealSocket
-    { socketIdentity    = uniqueId
-    , socketTransport   = transport
-    , socketHandle      = socket }
 
 liftSocketIO :: MonadIO m => IO a -> m a
 liftSocketIO =
@@ -94,19 +74,17 @@ instance MonadIO m => HasSockets (Sockets m) where
 
   connect transport addressType address port =
     Sockets $ do
-      uniqueId <- next
       withAddressFamily addressType $ liftSocketIO $ do
         socket@RealSocket{socketHandle = s} <-
-          setupSocket uniqueId transport addressType
+          setupSocket transport addressType
         S.connect s (actualAddress addressType address port)
         return socket
 
   listen (addressType :: AddressType f) (Port port) =
     Sockets $ do
-      uniqueId <- next
       withAddressFamily addressType $ liftSocketIO $ do
         socket@RealSocket{socketHandle = s} <-
-          setupSocket uniqueId TCP addressType
+          setupSocket TCP addressType
         let socketAddress :: S.SocketAddress f
             socketAddress =
               case addressType of
@@ -120,10 +98,9 @@ instance MonadIO m => HasSockets (Sockets m) where
 
   accept RealSocket{socketTransport, socketHandle = s} =
     Sockets $ do
-      uniqueId <- next
       liftSocketIO $ do
         (s', _) <- S.accept s
-        return $ wrapSocket uniqueId socketTransport s'
+        return $ RealSocket socketTransport s'
 
   send RealSocket{socketTransport, socketHandle = s} string =
     liftSocketIO $ case socketTransport of

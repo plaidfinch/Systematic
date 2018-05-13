@@ -14,16 +14,11 @@ module Systematic.Language
   , Port(..)
   , Backend
   , Program
-  , ThreadInfo(..)
   , HasThreads(..)
   , HasLog(..)
   , HasTextLog(..)
-  , RefInfo(..)
-  , VarInfo(..)
-  , ChannelInfo(..)
   , HasMemory(..)
   , HasSockets(..)
-  , SocketInfo(..)
   , sendLine
   ) where
 
@@ -112,29 +107,7 @@ type Backend m =
 type Program a
   = forall m. Backend m => m a
 
--- newtype Program a
---   = Program { run :: forall m. Backend m => m a }
-
--- instance Functor Program where
---   fmap f (Program p) = Program (fmap f p)
-
--- instance Applicative Program where
---   pure a = Program (pure a)
---   Program f <*> Program a =
---     Program (f <*> a)
-
--- instance Monad Program where
---   return  = pure
---   a >>= f = Program (run (a >>= f))
-
--- Types of things that have unique ids we can query
-class ThreadInfo  tid     where threadId  :: tid             -> Int
-class RefInfo     ref     where refId     :: ref a           -> Int
-class VarInfo     var     where varId     :: var a           -> Int
-class ChannelInfo channel where channelId :: channel a       -> Int
-class SocketInfo  socket  where socketId  :: socket f t mode -> Int
-
-class (ThreadInfo (ThreadId m), Monad m) => HasThreads m where
+class Monad m => HasThreads m where
   type ThreadId m :: Type
   fork  :: m a -> m (ThreadId m)
   kill  :: ThreadId m -> m ()
@@ -146,26 +119,26 @@ class Monad m => HasLog m where
 class Monad m => HasTextLog m where
   appendLogString :: String -> m ()
 
-class (RefInfo (Ref m), VarInfo (Var m), ChannelInfo (Channel m), Monad m)
-  => HasMemory m where
+class Monad m => HasMemory m where
 
   type Ref m :: Type -> Type
-  newRef    :: Show a => a -> m (Ref m a)
-  readRef   :: Show a => Ref m a -> m a
-  writeRef  :: Show a => Ref m a -> a -> m ()
+  newRef    :: a -> m (Ref m a)
+  readRef   :: Ref m a -> m a
+  writeRef  :: Ref m a -> a -> m ()
+  modifyRef :: Ref m a -> (a -> (a, b)) -> m b
 
   type Var m :: Type -> Type
-  newVar      :: Show a => a -> m (Var m a)
-  newEmptyVar :: Show a => m (Var m a)
-  takeVar     :: Show a => Var m a -> m a
-  putVar      :: Show a => Var m a -> a -> m ()
+  newVar      :: a -> m (Var m a)
+  newEmptyVar :: m (Var m a)
+  takeVar     :: Var m a -> m a
+  putVar      :: Var m a -> a -> m ()
 
   type Channel m :: Type -> Type
   newChan   :: m (Channel m a)
-  readChan  :: Show a => Channel m a -> m a
-  writeChan :: Show a => Channel m a -> a -> m ()
+  readChan  :: Channel m a -> m a
+  writeChan :: Channel m a -> a -> m ()
 
-class (SocketInfo (Socket m), Monad m) => HasSockets m where
+class Monad m => HasSockets m where
   type Socket m :: Type -> Type -> Mode -> Type
   connect
     :: Transport t -> AddressType f -> Address f -> Port
@@ -197,6 +170,7 @@ instance HasMemory m => HasMemory (ReaderT r m) where
   newRef    = lift .  newRef
   readRef   = lift .  readRef
   writeRef  = lift .: writeRef
+  modifyRef = lift .: modifyRef
 
   type Var (ReaderT r m) = Var m
   newVar      = lift .  newVar

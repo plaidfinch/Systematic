@@ -27,10 +27,6 @@ data Socket m f t (mode :: Mode)
       , wrappedSocket     :: Raw.Socket m f t mode
       }
 
-instance SocketInfo (Raw.Socket m) => SocketInfo (Socket m) where
-  socketId Socket{wrappedSocket} =
-    socketId wrappedSocket
-
 wrapSocket :: HasMemory m => Raw.Socket m f t mode -> m (Socket m f t mode)
 wrapSocket socket = do
   buffer <- newVar BS.empty

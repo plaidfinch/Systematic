@@ -46,5 +46,5 @@ realRun :: Program a -> IO a
 realRun =
   Real.run        -- run using the "real" backend,
   . Real.sockets  -- using actual network sockets,
-  . logCommands   -- logging all executed commands to stdout, and
-  . Real.memory   -- using real mutable memory to implement buffers & such
+  . Real.memory   -- using real mutable memory to implement buffers & such,
+  . logCommands   -- logging all executed commands to stdout
