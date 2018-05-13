@@ -27,7 +27,6 @@ library
                    Systematic.Socket.Buffered
 
                    Systematic.PosixError
-                   Systematic.Enumerator
 
                    Systematic.Logging
                    Systematic.LogCommands

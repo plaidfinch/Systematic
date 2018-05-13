@@ -5,5 +5,4 @@ import Systematic.Language as X (HasSockets)
 
 import Systematic.Logging     as X
 import Systematic.PosixError  as X
-import Systematic.Enumerator  as X
 import Systematic.LogCommands as X

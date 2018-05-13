@@ -19,9 +19,6 @@ import Data.Monoid
 import Data.Functor
 import Data.Coerce
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BS
-
 import Foreign.C.Types
 
 import Prelude hiding (log)
@@ -135,12 +132,3 @@ withAddressFamily IPv6 k = k
 withTransportType :: Transport t -> (S.Type t => r) -> r
 withTransportType TCP k = k
 withTransportType UDP k = k
-
--- Split on a character if it is found
-maybeSplit :: Char -> ByteString -> Maybe (ByteString, ByteString)
-maybeSplit char string =
-  if BS.length suffix > 0
-  then Just (prefix, BS.drop 1 suffix)
-  else Nothing
-  where
-    (prefix, suffix) = BS.break (== char) string
