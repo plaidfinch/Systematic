@@ -37,6 +37,7 @@ instance HasThreads Base where
     return (RealThreadId i tid)
   kill (RealThreadId _ tid) =
     liftIO (killThread tid)
+  yield = return ()
 
 instance HasTextLog Base where
   appendLogString = liftIO . putStrLn

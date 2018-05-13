@@ -90,6 +90,8 @@ instance (HasThreads m, HasTextLog m, MonadCatch m, MonadFix m)
       concat [ "kill "
              , nameThread tid
              ]
+  yield =
+    logCommand don't_show yield $ "yield"
 
 showWithParens :: Show a => a -> String
 showWithParens a = showsPrec 11 a ""

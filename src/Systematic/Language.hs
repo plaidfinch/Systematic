@@ -136,8 +136,9 @@ class SocketInfo  socket  where socketId  :: socket f t mode -> Int
 
 class (ThreadInfo (ThreadId m), Monad m) => HasThreads m where
   type ThreadId m :: Type
-  fork :: m a -> m (ThreadId m)
-  kill :: ThreadId m -> m ()
+  fork  :: m a -> m (ThreadId m)
+  kill  :: ThreadId m -> m ()
+  yield :: m ()
 
 class Monad m => HasLog m where
   log :: (Typeable message, Show message) => message -> m ()
