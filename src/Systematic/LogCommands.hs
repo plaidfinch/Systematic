@@ -32,7 +32,8 @@ newtype LogCommands m a
   = LogCommands (ReaderT (LogState m) m a)
   deriving newtype
     ( Functor, Applicative, Monad
-    , MonadIO, MonadThrow, MonadCatch, MonadFix )
+    , MonadIO, MonadThrow, MonadCatch, MonadFix
+    , HasMemory, HasBlockingMemory )
 
 logCommands :: (HasMemory m, HasTextLog m) => LogCommands m a -> m a
 logCommands action = do
@@ -208,6 +209,8 @@ instance (HasLog m, HasTextLog m, MonadCatch m) => HasLog (LogCommands m) where
              , showWithParens message
              ]
 
+-- TODO: How to log memory? Add manual comment ability to logs?
+
 -- instance (HasMemory m, HasTextLog m, MonadCatch m)
 --   => HasMemory (LogCommands m) where
 
@@ -340,21 +343,3 @@ instance (HasSockets m, HasMemory m, HasTextLog m, MonadCatch m)
       concat [ "close "
              , nameOf3 socket
              ]
-
-instance HasMemory m => HasMemory (LogCommands m) where
-  type Ref (LogCommands m) = Ref m
-  newRef    = lift .  newRef
-  readRef   = lift .  readRef
-  writeRef  = lift .: writeRef
-  modifyRef = lift .: modifyRef
-
-  type Var (LogCommands m) = Var m
-  newVar      = lift .  newVar
-  newEmptyVar = lift    newEmptyVar
-  takeVar     = lift .  takeVar
-  putVar      = lift .: putVar
-
-  type Channel (LogCommands m) = Channel m
-  newChan   = lift    newChan
-  readChan  = lift .  readChan
-  writeChan = lift .: writeChan

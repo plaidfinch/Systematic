@@ -1,10 +1,9 @@
-module Systematic.Backend.Real.Base where
+module Systematic.Backend.Real.Base (Base, base) where
 
 import Systematic.Language
 
 import Control.Concurrent hiding (ThreadId)
 import qualified Control.Concurrent as GHC
-import Data.Functor
 
 import Control.Monad.IO.Class
 import Control.Monad.Catch
@@ -19,13 +18,13 @@ newtype Base a
     ( Functor, Applicative, Monad,
       MonadIO, MonadThrow, MonadCatch, MonadFix )
 
-run :: Base a -> IO a
-run = coerce
+base :: Base a -> IO a
+base = coerce
 
 instance HasThreads Base where
   type ThreadId Base = GHC.ThreadId
   fork (Base process) = Base $ do
-    tid <- liftIO . forkIO . void $ process
+    tid <- liftIO . forkIO $ process
     return tid
   kill tid =
     liftIO (killThread tid)

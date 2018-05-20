@@ -39,7 +39,7 @@ wrapSocket socket = do
 -- Receiving is the only thing different in implementation for a buffered socket
 
 receive
-  :: (HasMemory m, HasSockets m)
+  :: (HasBlockingMemory m, HasSockets m)
   => Socket m f t Connected -> m ByteString
 receive Socket{wrappedSocket, socketBuffer} = do
   buffered <- takeVar socketBuffer
@@ -53,7 +53,7 @@ receive Socket{wrappedSocket, socketBuffer} = do
       return received
 
 receiveUntil
-  :: (HasMemory m, HasSockets m)
+  :: (HasBlockingMemory m, HasSockets m)
   => Char -> Socket m f t Connected -> m (Maybe ByteString)
 receiveUntil char Socket{wrappedSocket, socketBuffer} = do
   buffered <- takeVar socketBuffer
@@ -74,7 +74,7 @@ receiveUntil char Socket{wrappedSocket, socketBuffer} = do
                 fmap (received :) <$> again
 
 receiveLine
-  :: (HasMemory m, HasSockets m)
+  :: (HasBlockingMemory m, HasSockets m)
   => Socket m f t Connected
   -> m (Maybe ByteString)
 receiveLine =

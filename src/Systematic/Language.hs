@@ -18,6 +18,7 @@ module Systematic.Language
   , HasLog(..)
   , HasTextLog(..)
   , HasMemory(..)
+  , HasBlockingMemory(..)
   , HasSockets(..)
   , sendLine
   ) where
@@ -30,7 +31,6 @@ import Data.Monoid
 
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
-import Data.Functor
 
 import Prelude hiding (log)
 
@@ -102,14 +102,14 @@ newtype Port
 -- TODO: add back the log, implement it for backend(s)
 -- What a backend has to support
 type Backend m =
-  ({-HasLog m,-} HasMemory m, HasSockets m, HasThreads m)
+  ({-HasLog m,-} HasBlockingMemory m, HasSockets m, HasThreads m)
 
 type Program a
   = forall m. Backend m => m a
 
 class Monad m => HasThreads m where
   type ThreadId m :: Type
-  fork  :: m a -> m (ThreadId m)
+  fork  :: m () -> m (ThreadId m)
   kill  :: ThreadId m -> m ()
   yield :: m ()
 
@@ -120,7 +120,6 @@ class Monad m => HasTextLog m where
   appendLogString :: String -> m ()
 
 class Monad m => HasMemory m where
-
   type Ref m :: Type -> Type
   newRef    :: a -> m (Ref m a)
   readRef   :: Ref m a -> m a
@@ -130,13 +129,18 @@ class Monad m => HasMemory m where
   type Var m :: Type -> Type
   newVar      :: a -> m (Var m a)
   newEmptyVar :: m (Var m a)
-  takeVar     :: Var m a -> m a
-  putVar      :: Var m a -> a -> m ()
+  tryTakeVar  :: Var m a -> m (Maybe a)
+  tryPutVar   :: Var m a -> a -> m Bool
 
   type Channel m :: Type -> Type
   newChan   :: m (Channel m a)
   readChan  :: Channel m a -> m a
   writeChan :: Channel m a -> a -> m ()
+
+class HasMemory m => HasBlockingMemory m where
+  takeVar :: Var m a -> m a
+  readVar :: Var m a -> m a
+  putVar  :: Var m a -> a -> m ()
 
 class Monad m => HasSockets m where
   type Socket m :: Type -> Type -> Mode -> Type
@@ -175,19 +179,24 @@ instance HasMemory m => HasMemory (ReaderT r m) where
   type Var (ReaderT r m) = Var m
   newVar      = lift .  newVar
   newEmptyVar = lift    newEmptyVar
-  takeVar     = lift .  takeVar
-  putVar      = lift .: putVar
+  tryTakeVar  = lift .  tryTakeVar
+  tryPutVar   = lift .: tryPutVar
 
   type Channel (ReaderT r m) = Channel m
   newChan   = lift    newChan
   readChan  = lift .  readChan
   writeChan = lift .: writeChan
 
+instance HasBlockingMemory m => HasBlockingMemory (ReaderT r m) where
+  takeVar = lift .  takeVar
+  readVar = lift .  readVar
+  putVar  = lift .: putVar
+
 instance HasThreads m => HasThreads (ReaderT r m) where
   type ThreadId (ReaderT r m) = ThreadId m
   fork process = do
     r   <- ask
-    tid <- lift . fork . void $ runReaderT process r
+    tid <- lift . fork $ runReaderT process r
     return tid
   kill = lift . kill
 

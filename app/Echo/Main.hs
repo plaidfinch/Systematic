@@ -44,7 +44,7 @@ echoServer port = do
 -- One choice of backend: this is how we'll run our program this time
 realRun :: Program a -> IO a
 realRun =
-  Real.run        -- run using the "real" backend,
-  . Real.sockets  -- using actual network sockets,
+  Real.base       -- run using the "real" backend (which includes threading),
+  . Real.sockets  -- using real network sockets,
   . Real.memory   -- using real mutable memory to implement buffers & such,
   . logCommands   -- logging all executed commands to stdout
