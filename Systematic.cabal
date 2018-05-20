@@ -36,6 +36,8 @@ library
                    Systematic.Backend.Real.Sockets
                    Systematic.Backend.Real.Memory
 
+                   Systematic.Backend.Mock.Base
+
   build-depends:   base >= 4.7 && < 5,
                    bytestring >= 0.10 && < 0.11,
                    socket >= 0.8 && < 0.9,

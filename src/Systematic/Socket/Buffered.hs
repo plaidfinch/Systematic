@@ -27,7 +27,7 @@ data Socket m f t (mode :: Mode)
       , wrappedSocket     :: Raw.Socket m f t mode
       }
 
-wrapSocket :: HasMemory m => Raw.Socket m f t mode -> m (Socket m f t mode)
+wrapSocket :: HasSync m => Raw.Socket m f t mode -> m (Socket m f t mode)
 wrapSocket socket = do
   buffer <- newVar BS.empty
   return
@@ -39,7 +39,7 @@ wrapSocket socket = do
 -- Receiving is the only thing different in implementation for a buffered socket
 
 receive
-  :: (HasBlockingMemory m, HasSockets m)
+  :: (HasSync m, HasSockets m)
   => Socket m f t Connected -> m ByteString
 receive Socket{wrappedSocket, socketBuffer} = do
   buffered <- takeVar socketBuffer
@@ -53,7 +53,7 @@ receive Socket{wrappedSocket, socketBuffer} = do
       return received
 
 receiveUntil
-  :: (HasBlockingMemory m, HasSockets m)
+  :: (HasSync m, HasSockets m)
   => Char -> Socket m f t Connected -> m (Maybe ByteString)
 receiveUntil char Socket{wrappedSocket, socketBuffer} = do
   buffered <- takeVar socketBuffer
@@ -74,7 +74,7 @@ receiveUntil char Socket{wrappedSocket, socketBuffer} = do
                 fmap (received :) <$> again
 
 receiveLine
-  :: (HasBlockingMemory m, HasSockets m)
+  :: (HasSync m, HasSockets m)
   => Socket m f t Connected
   -> m (Maybe ByteString)
 receiveLine =
@@ -84,20 +84,20 @@ receiveLine =
 -- Lifting raw socket commands onto buffered sockets
 
 connect
-  :: (HasMemory m, HasSockets m)
+  :: (HasSync m, HasSockets m)
   => Transport t -> AddressType f -> Address f -> Port
   -> m (Socket m f t Connected)
 connect transport addressType address port =
   wrapSocket =<< Raw.connect transport addressType address port
 
 listen
-  :: (HasMemory m, HasSockets m)
+  :: (HasSync m, HasSockets m)
   => AddressType f -> Port -> m (Socket m f TCP Listening)
 listen addressType port =
   wrapSocket =<< Raw.listen addressType port
 
 accept
-  :: (HasMemory m, HasSockets m)
+  :: (HasSync m, HasSockets m)
   => Socket m f TCP Listening -> m (Socket m f TCP Connected)
 accept Socket{wrappedSocket} =
   wrapSocket =<< Raw.accept wrappedSocket

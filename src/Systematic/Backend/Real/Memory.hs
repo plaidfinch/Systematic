@@ -34,18 +34,17 @@ instance MonadIO m => HasMemory (Memory m) where
   writeRef ref val = liftIO $ writeIORef ref val
   modifyRef ref f  = liftIO $ atomicModifyIORef ref f
 
-  type Var (Memory m) = MVar
-  newEmptyVar       = liftIO newEmptyMVar
-  newVar val        = liftIO $ newMVar val
-  tryTakeVar var    = liftIO $ tryTakeMVar var
-  tryPutVar var val = liftIO $ tryPutMVar var val
-
   type Channel (Memory m) = Chan
   newChan            = liftIO GHC.newChan
   readChan chan      = liftIO $ GHC.readChan chan
   writeChan chan val = liftIO $ GHC.writeChan chan val
 
-instance MonadIO m => HasBlockingMemory (Memory m) where
-  takeVar var    = liftIO $ takeMVar var
-  readVar var    = liftIO $ readMVar var
-  putVar var val = liftIO $ putMVar var val
+instance MonadIO m => HasSync (Memory m) where
+  type Var (Memory m) = MVar
+  newEmptyVar       = liftIO newEmptyMVar
+  newVar val        = liftIO $ newMVar val
+  tryTakeVar var    = liftIO $ tryTakeMVar var
+  tryPutVar var val = liftIO $ tryPutMVar var val
+  takeVar var       = liftIO $ takeMVar var
+  readVar var       = liftIO $ readMVar var
+  putVar var val    = liftIO $ putMVar var val

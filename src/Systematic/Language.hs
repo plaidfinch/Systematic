@@ -18,7 +18,7 @@ module Systematic.Language
   , HasLog(..)
   , HasTextLog(..)
   , HasMemory(..)
-  , HasBlockingMemory(..)
+  , HasSync(..)
   , HasSockets(..)
   , sendLine
   ) where
@@ -102,7 +102,7 @@ newtype Port
 -- TODO: add back the log, implement it for backend(s)
 -- What a backend has to support
 type Backend m =
-  ({-HasLog m,-} HasBlockingMemory m, HasSockets m, HasThreads m)
+  ({-HasLog m,-} HasSync m, HasSockets m, HasThreads m)
 
 type Program a
   = forall m. Backend m => m a
@@ -126,21 +126,20 @@ class Monad m => HasMemory m where
   writeRef  :: Ref m a -> a -> m ()
   modifyRef :: Ref m a -> (a -> (a, b)) -> m b
 
-  type Var m :: Type -> Type
-  newVar      :: a -> m (Var m a)
-  newEmptyVar :: m (Var m a)
-  tryTakeVar  :: Var m a -> m (Maybe a)
-  tryPutVar   :: Var m a -> a -> m Bool
-
   type Channel m :: Type -> Type
   newChan   :: m (Channel m a)
   readChan  :: Channel m a -> m a
   writeChan :: Channel m a -> a -> m ()
 
-class HasMemory m => HasBlockingMemory m where
-  takeVar :: Var m a -> m a
-  readVar :: Var m a -> m a
-  putVar  :: Var m a -> a -> m ()
+class HasMemory m => HasSync m where
+  type Var m :: Type -> Type
+  newVar      :: a -> m (Var m a)
+  newEmptyVar :: m (Var m a)
+  tryTakeVar  :: Var m a -> m (Maybe a)
+  tryPutVar   :: Var m a -> a -> m Bool
+  takeVar     :: Var m a -> m a
+  readVar     :: Var m a -> m a
+  putVar      :: Var m a -> a -> m ()
 
 class Monad m => HasSockets m where
   type Socket m :: Type -> Type -> Mode -> Type
@@ -176,21 +175,20 @@ instance HasMemory m => HasMemory (ReaderT r m) where
   writeRef  = lift .: writeRef
   modifyRef = lift .: modifyRef
 
-  type Var (ReaderT r m) = Var m
-  newVar      = lift .  newVar
-  newEmptyVar = lift    newEmptyVar
-  tryTakeVar  = lift .  tryTakeVar
-  tryPutVar   = lift .: tryPutVar
-
   type Channel (ReaderT r m) = Channel m
   newChan   = lift    newChan
   readChan  = lift .  readChan
   writeChan = lift .: writeChan
 
-instance HasBlockingMemory m => HasBlockingMemory (ReaderT r m) where
-  takeVar = lift .  takeVar
-  readVar = lift .  readVar
-  putVar  = lift .: putVar
+instance HasSync m => HasSync (ReaderT r m) where
+  type Var (ReaderT r m) = Var m
+  newVar      = lift .  newVar
+  newEmptyVar = lift    newEmptyVar
+  tryTakeVar  = lift .  tryTakeVar
+  tryPutVar   = lift .: tryPutVar
+  takeVar     = lift .  takeVar
+  readVar     = lift .  readVar
+  putVar      = lift .: putVar
 
 instance HasThreads m => HasThreads (ReaderT r m) where
   type ThreadId (ReaderT r m) = ThreadId m
@@ -199,6 +197,7 @@ instance HasThreads m => HasThreads (ReaderT r m) where
     tid <- lift . fork $ runReaderT process r
     return tid
   kill = lift . kill
+  yield = lift yield
 
 instance HasSockets m => HasSockets (ReaderT r m) where
   type Socket (ReaderT r m) = Socket m

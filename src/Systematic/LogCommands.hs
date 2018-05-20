@@ -33,7 +33,7 @@ newtype LogCommands m a
   deriving newtype
     ( Functor, Applicative, Monad
     , MonadIO, MonadThrow, MonadCatch, MonadFix
-    , HasMemory, HasBlockingMemory )
+    , HasMemory, HasSync )
 
 logCommands :: (HasMemory m, HasTextLog m) => LogCommands m a -> m a
 logCommands action = do
