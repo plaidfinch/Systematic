@@ -155,7 +155,7 @@ instance (HasThreads backend, ...) => HasThreads (LogCommands backend) where
       concat [ "kill "
              , nameOf tid
              ]
-  ..
+  ...
 ```
 
 There's a lot of mechanism in this module for tracking unique names of objects and logging output, but the important thing to notice is that the above implementation of `kill` uses the underlying backend's `kill` method (via a call to `lift`, which runs an action in the underlying backend). Additionally, it performs extra actions: namely, logging the command which was just executed.
@@ -180,7 +180,7 @@ Furthermore, we use the type system to enforce some invariants which are already
 - It is only possible to `send` or `receive` on a socket which is in the connected state (as opposed to the unbound or listening state)
 - All `send` commands transmit the entire string, with no remainder (implementations may translate this to multiple calls to the underlying `SEND(2)` system call)
 
-Enforcing all these invariants leads to a relatively type-safe interface for socket programming. The rest of this section dives into the details of how these guarantees are enforced, and makes use of some relatively heavyweight Haskell type-hackery.
+Enforcing all these invariants leads to a relatively type-safe interface for socket programming. The next subsection dives into the details of how these guarantees are enforced, and makes use of some relatively heavyweight Haskell type-hackery; we emerge back to a higher level in the subsection following.
 
 ### Enforcing Socket Invariants
 
@@ -261,6 +261,40 @@ Stepping through this class, a description of each method:
 - The `close` method may be called on any socket in any mode.
 
 Exceptions may still be thrown by calling these methods, and the user is expected to handle them using the standard exception-handling mechanisms built into Haskell. However, many of the most common mistakes with socket programming are eliminated by this typing discipline.
+
+### Buffered Sockets for Line-Oriented Programming
+
+Many socket programs (indeed, many Unix programs) operate on a line-oriented basis: they accept zero or more lines of input, and emit zero or more lines of input, each separated by some delimiter, usually the newline character `\n`. Natively, POSIX sockets do not support line-buffering&mdash; when you call `receive` on a socket, you get back some number of bytes, and you have no control over their contents.
+
+In order to support the line-oriented style, many programmers find themselves repeating the same pattern over and over: allocate a buffer and a socket, keep receiving until a newline is found, and store the rest of the received text in the buffer, waiting for the next iteration of some program loop.
+
+If we were to support a high-level operation like `receiveLine` in our `HasSockets` interface, it would mean that every socket-implementing backend would separately need to re-implement this buffering algorithm, resulting in unbounded duplication of work. It would also mix abstraction layers in an aesthetically unpleasing way. The solution? Implement buffered sockets once, _parameterized_ over the socket type they use, as well as the type of mutable memory they require for the buffer. This approach means we only have to implement the buffering algorithm _once_, and it can be reused for any new backend implementing a raw socket API.
+
+Because we don't want to force users to incur the (small) extra cost of buffering if they don't plan to use line-oriented sockets, we provide a choice with no default: in order to use the sockets API, a user must import either
+
+```haskell
+import Systematic.Socket.Buffered
+```
+
+or they must import
+
+```haskell
+import Systematic.Socket.Raw
+```
+
+These modules expose a nearly identical interface (including type names), which means that one can be a drop-in replacement for the other. In the `Buffered` module, a `Socket` wraps a socket from the underlying backend, pairing it with a mutable buffer relying on the synchronized mutable variables from that same backend.
+
+The only user-facing distinction is that the `Buffered` module has the single additional function `receiveUntil`:
+
+```haskell
+receiveUntil
+  :: (HasSync backend, HasSockets backend)
+  => Char
+  -> Socket backend f t Connected
+  -> backend (Maybe ByteString)
+```
+
+Notice that the type signature of `receiveUntil` mandates that the `backend` upon which it is run must not only support sockets, but also (synchronized) memory, which it uses to implement its buffer. As a result, these buffered sockets can be used on a backend with an alternate implementation of synchronized memory, with no further trouble.
 
 ## Putting it Together
 
