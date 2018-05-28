@@ -365,3 +365,22 @@ $ nc localhost 8080
 As you interact with the server, you should see informative output in the window where you originally executed the server. Once you've closed all the clients (a `^D` will suffice), you can shut down the server by killing it with `^C`.
 
 When the server is killed, your shell may inject some text into its output, and it may be difficult to read the last line of the log. To see exactly what the server logs, you can redirect its output to a file. Note that the server caught the user-interrupt, logged the exception, and quit (this is built into the interpreter stack).
+
+## The Future of Systematic
+
+The majority of the work thus far was toward building an extensible type-safe architecture to support the development of the Systematic language. While the echo server example shows that individual programs can be run, it's not an impressive _distributed_ system&mdash;and that's what this project set out to work with!
+
+I am confident that the groundwork laid here will allow quick development of further backends and language features. In particular, to support testing, we would like to virtualize every aspect of the language:
+
+- a virtual heap for observable memory usage testing
+- several implementations of logging, for trace-based schedule testing
+- a mock scheduler with a user-space scheduling algorithm, for deterministic replay
+- a mock network to allow several programs to communicate as if they were in a distributed setting, to allow entire systems to be randomized and replayed
+
+We'd also like to add new language features and distinct backends to them, notably filesystem interaction (requiring a virtual filesystem) and others.
+
+As described in this document, these separate backend layers could be arbitrarily combined with the existing "real world" backend implementations, to allow partial mocking. As demonstrated in the `LogCommands` layer, it's also possible to implement live observation of particular layers of a system without affecting its functionality, and while allowing that functionality itself to be determined by a flexible set of layers.
+
+Beyond fleshing out these language features and backends, we would also like to develop a suite of distributed algorithms, intended for pedagogy. The Systematic language defines a simple and safe surface which makes the implementations of distributed programs significantly shorter and easier to read than their corresponding imperative equivalents (i.e. those in C or C++). We'd like to take advantage of this to create educational materials for students of distributed systems, especially those who already have exposure to functional programming concepts.
+
+It's been a pleasure working on this project, and I look forward to continuing some day!
