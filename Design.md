@@ -78,7 +78,7 @@ instance Display Employee where
     name e ++ " works for " ++ company e
 ```
 
-### Typeclass-based Language Interfaces
+### Typeclass-Based Language Interfaces
 
 In the MTL style, we use typeclasses to describe what parts of the language a particular backend implements. For example, we describe the abstract interface to mutable memory cells (`Ref`s) like this (simplified from actual version):
 
@@ -166,9 +166,103 @@ The full list of operations in the Systematic language can be found in `src/Syst
 
 The most complicated language interface in the Systematic language is the interface for socket programming. This piece of the language is also where we choose to make the most unorthodox simplifications to the underlying computation model, for the purpose of clarity and type-safety.
 
+We build on top of Haskell's `System.Socket` library, simplifying the interface by making the following assumptions:
 
+- Sockets are never re-used after they are opened
+- A listening socket is always bound to the wildcard address and a specific port
+- TCP and UDP are the only transport layers
+- IPv4 and IPv6 are the only addressing schemes
+- The size of the write-buffer used by `receive` is implementation-defined and not user-specifiable
 
-## Putting It Together
+Furthermore, we use the type system to enforce some invariants which are already true of the POSIX socket API, but which would cause runtime exceptions if not prevented statically:
+
+- It is only possible to `listen` and `accept` via TCP connections
+- It is only possible to `send` or `receive` on a socket which is in the connected state (as opposed to the unbound or listening state)
+- All `send` commands transmit the entire string, with no remainder (implementations may translate this to multiple calls to the underlying `SEND(2)` system call)
+
+Enforcing all these invariants leads to a relatively type-safe interface for socket programming. The rest of this section dives into the details of how these guarantees are enforced, and makes use of some relatively heavyweight Haskell type-hackery.
+
+### Enforcing Socket Invariants
+
+We will aggressively apply the typed functional programmer's motto:
+
+> Make illegal states unrepresentable!
+
+We assume that every allocated socket is always going to be used, whether that is to `listen` on it, or to `connect` with it. As such, the user interface has no way to represent a socket which is not currently in either a listening or connected state. We define the `Mode` of a socket:
+
+```haskell
+data Mode
+  = Listening
+  | Connected
+```
+
+Sockets will have a _type-indexed_ by this `Mode`, so that it is not possible to use a `Listening` socket in a place where the type system expects a `Connected` one, or vice-versa.
+
+We then define two _singleton types_ to represent the transport layer and address type used by a particular connection. A singleton type is a type whose structure is mirrored in its type index: there is exactly one value of a set of singleton types for each possible type index. Crucially, the type-checker knows this, which means that when the programmer examines a singleton type, more type information is revealed.
+
+```haskell
+data Transport t where
+  TCP :: Transport TCP
+  UDP :: Transport UDP
+
+data AddressType f where
+  IPv4 :: AddressType IPv4
+  IPv6 :: AddressType IPv6
+```
+
+These types will allow us to ensure that the user specifies the correct IP address format for a given connection type. The _type family_ (read: "type-level function") `Address` maps from an address type (like `IPv4`) to the type which represents this variety of addresses (like `(Word8, Word8, Word8, Word8)`).
+
+This means that a function expecting an `AddressType f` and an `Address f` knows that if the `AddressType` is `IPv4`, the `Address` must be a 4-tuple of `Word8`. (In the case of `IPv6`, we represent an address as an 8-tuple of `Word16`.)
+
+With these types in hand, we can describe the socket API exposed to programmers in the Systematic language:
+
+```haskell
+class HasSockets backend where
+
+  type Socket backend :: Type -> Type -> Mode -> Type
+
+  connect
+    :: Transport t
+    -> AddressType f
+    -> Address f
+    -> Port
+    -> backend (Socket backend f t Connected)
+
+  listen
+    :: AddressType f
+    -> Port
+    -> backend (Socket backend f TCP Listening)
+
+  accept
+    :: Socket backend f TCP Listening
+    -> backend (Socket backend f TCP Connected)
+
+  send
+    :: Socket backend f t Connected
+    -> ByteString
+    -> backend ()
+
+  receive
+    :: Socket backend f t Connected
+    -> backend ByteString
+
+  close
+    :: Socket backend f t mode
+    -> backend ()
+```
+
+Stepping through this class, a description of each method:
+
+- A backend needs to specify its concrete type of sockets. A `Socket backend` is expected to be indexed by three types, in order: its address type (`IPv4` or `IPv6`), its transport layer (`TCP` or `UDP`), and its `Mode` (`Listening` or `Connected`).
+- To `connect`, a new socket is allocated with the given `Transport`, using the given `AddressType`, connected to the given `Address` (of that type), and the given `Port`. When the socket is returned to the user, it is already connected.
+- To `listen` as a given `AddressType` on a `Port`, the user must be expecting a `TCP` socket, and one is haded to them which is already in `Listening` mode and bound to that port.
+- To `accept` on a `TCP` socket, it must be in `Listening` mode, and the user is given as a result a socket which is already `Connected`.
+- To `send` or `receive`, the user gives a `Connected` socket (of any address type and transport), and supplies a bytestring or receives one, respectively.
+- The `close` method may be called on any socket in any mode.
+
+Exceptions may still be thrown by calling these methods, and the user is expected to handle them using the standard exception-handling mechanisms built into Haskell. However, many of the most common mistakes with socket programming are eliminated by this typing discipline.
+
+## Putting it Together
 
 Now that we've seen an overview of the composable architecture of the Systematic language, let's see it in action. It can be found in full (with comments) in the file `app/Echo/Main.hs`.
 
