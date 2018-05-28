@@ -43,7 +43,7 @@ In the MTL style of eDSL, each layer of the language interface (threading, loggi
 
 Typeclasses are similar to traditional object-oriented interfaces, with the distinction that a datatype's implementation of an interface is decoupled from the definition of that datatype and the definition of the interface: neither the author of the interface nor the datatype needs to know in advance about the other in order for some third party to implement the interface for the type. Such implementations are called _typeclass instances_. Below is an example of a simple typeclass, and an instance implementing it for a datatype:
 
-```
+```haskell
 data Employee
   = Employee
       { name    :: String
@@ -62,7 +62,7 @@ instance Display Employee where
 
 In the MTL style, we use typeclasses to describe what parts of the language a particular backend implements. For example, we describe the abstract interface to mutable memory cells (`Ref`s) like this (simplified from actual version):
 
-```
+```haskell
 class HasMemory backend where
   type Ref backend
   newRef   :: a -> backend (Ref backend a)
@@ -76,7 +76,7 @@ Any program written in the Systematic language, though, is not permitted to depe
 
 A Systematic program must be given the _Haskell_ type `Program`, and the Haskell (host) language's type system will prevent Systematic programs from depending on implementation details of a particular back-end.
 
-```
+```haskell
 type Program a
   = forall backend.
       ( HasThreads backend
