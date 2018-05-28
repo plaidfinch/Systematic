@@ -8,6 +8,26 @@ Systematic is a Haskell library for implementing distributed systems, designed w
 
 We deliberately favor simplicity and testability over completeness and performance, nevertheless attempting to provide reasonable flexibility and speed at the same time.
 
+While reading, I recommend you start the build process for Systematic, so that when you get to the examples, you're ready to run them.
+
+## Building Systematic
+
+You'll need to install the Haskell build tool `stack`, which can be obtained from <https://docs.haskellstack.org/en/stable/install_and_upgrade>. If you trust the Stack developers enough, you can just run this command:
+
+```
+$ curl -sSL https://get.haskellstack.org/ | sh
+```
+
+If you're more careful, you can find manual installation links on the above page.
+
+Clone the Systematic repository, then navigate inside of it, and run the command:
+
+```
+$ stack build
+```
+
+This will probably take a little while. As it's building, read on!
+
 ## What is a Systematic system?
 
 A distributed system in the Systematic framework consists of one or more _programs_. These programs may be executed on the same or different nodes. In the case of testing, we will run all the programs in a system on a single physical machine, simulating the network between them. When running these programs as a distributed system in the real world, they may be operating on one or more different physical machines, connected by the real network.
@@ -144,6 +164,8 @@ The full list of operations in the Systematic language can be found in `src/Syst
 
 ## Socket Programming in Systematic
 
+The most complicated language interface in the Systematic language is the interface for socket programming. This piece of the language is also where we choose to make the most unorthodox simplifications to the underlying computation model, for the purpose of clarity and type-safety.
+
 
 
 ## Putting It Together
@@ -199,3 +221,19 @@ The remainder of the echo server program in the file is a simple wrapper in ordi
 ```haskell
 realRun (echoServer (Port port))
 ```
+
+If you started the build of the Systematic project when you started reading, it should be done by now, and you can run this example by navigating to the topmost directory in the Systematic project and running the command:
+
+```
+$ stack exec -- echo 8080
+```
+
+This terminal window will log the commands executed as the server runs. In another window (or more than one), you can connect to the server using netcat:
+
+```
+$ nc localhost 8080
+```
+
+As you interact with the server, you should see informative output in the window where you originally executed the server. Once you've closed all the clients (a `^D` will suffice), you can shut down the server by killing it with `^C`.
+
+When the server is killed, your shell may inject some text into its output, and it may be difficult to read the last line of the log. To see exactly what the server logs, you can redirect its output to a file. Note that the server caught the user-interrupt, logged the exception, and quit (this is built into the interpreter stack).
